@@ -290,6 +290,32 @@
         </div>
 
         <div id="viewBoard" style="display:none;">
+          <!-- ✅ GAME OVER 大字顯示 -->
+          <div id="gameOverPanel" style="display:none; margin-bottom:12px;">
+            <div id="goTitle" style="
+              font-weight:1000;
+              font-size:34px;
+              letter-spacing:1px;
+              text-align:center;
+              margin:2px 0 6px;
+            ">GAME OVER！</div>
+
+            <div style="
+              text-align:center;
+              font-weight:900;
+              font-size:14px;
+              color:rgba(255,255,255,0.72);
+              margin-bottom:6px;
+            ">本局得分</div>
+
+            <div id="goScore" style="
+              text-align:center;
+              font-weight:1000;
+              font-size:44px;
+              line-height:1.05;
+            ">0分</div>
+          </div>
+
           <div class="actions" style="margin-top:0;">
             <button id="btnBackToLogin" class="btn btnGhost">回到首頁</button>
             <button id="btnRefreshBoard" class="btn btnGhost">刷新</button>
@@ -336,6 +362,15 @@
   const db = getFirestore(app);
   const LEADERBOARD_COL = "leaderboard_v1";
 
+  // ✅ Promise 超時保護（避免 game over 卡死）
+  function withTimeout(promise, ms, msg = "timeout") {
+    let t;
+    const timeout = new Promise((_, rej) => {
+      t = setTimeout(() => rej(new Error(msg)), ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
+  }
+
   // 每台裝置固定一個 uid（避免同名互相覆蓋）
   const LS_UID_KEY = "blockDeviceUidV1";
   function getOrCreateDeviceUid() {
@@ -353,7 +388,6 @@
     if (!name) return;
 
     const ref = doc(db, LEADERBOARD_COL, deviceUid);
-    console.log("[LB] writing to", LEADERBOARD_COL, deviceUid, { name, score });
     const snap = await getDoc(ref);
     const prev = snap.exists() ? Number(snap.data().score || 0) : 0;
 
@@ -407,6 +441,10 @@
   const boardList = document.getElementById("boardList");
   const boardStatus = document.getElementById("boardStatus");
 
+  // ✅ GAME OVER elements
+  const gameOverPanel = document.getElementById("gameOverPanel");
+  const goScore = document.getElementById("goScore");
+
   function showOverlay() { overlay.style.display = "flex"; }
   function hideOverlay() { overlay.style.display = "none"; }
   function syncPlayerMini() {
@@ -428,6 +466,7 @@
   btnToBoard.onclick = () => switchTab("board");
 
   btnBackToLogin.onclick = () => {
+    gameOverPanel.style.display = "none";
     showOverlay();
     switchTab("login");
     nameInput.focus();
@@ -437,6 +476,7 @@
 
   btnPlayAgain.onclick = () => {
     hideOverlay();
+    gameOverPanel.style.display = "none"; // ✅ 收起 GAME OVER
     gameOver = false;
     resetGame();
   };
@@ -485,7 +525,7 @@
     boardList.innerHTML = "";
 
     try {
-      const top = await remoteFetchTop(10);
+      const top = await withTimeout(remoteFetchTop(10), 3500, "Firestore read timeout");
 
       if (!top.length) {
         const empty = document.createElement("div");
@@ -505,7 +545,7 @@
         boardList.appendChild(renderRow(i+1, item.name, item.score, isMe));
       });
 
-      const me = await remoteFetchMe();
+      const me = await withTimeout(remoteFetchMe(), 3500, "Firestore me timeout");
       if (me && typeof me.score === "number") {
         const inTop = top.some(x => x.uid === deviceUid);
         if (!inTop) {
@@ -513,7 +553,7 @@
           sep.className = "sep";
           boardList.appendChild(sep);
 
-          const myRank = await remoteComputeMyRank(me.score);
+          const myRank = await withTimeout(remoteComputeMyRank(me.score), 3500, "Firestore rank timeout");
           if (myRank != null) {
             boardList.appendChild(renderRow(myRank, me.name, me.score, true));
           }
@@ -783,6 +823,7 @@
     failOverlayLife = 0;
     bounceLife = 0;
 
+    // clear-anim state
     clearingCells = [];
     clearingMap.clear();
 
@@ -808,7 +849,7 @@
     }
   }
 
-  // ✅ clearing(2) 也視為佔用，避免放置/判定穿模
+  // ✅ clearing(2) 也視為佔用
   function canPlace(shape, r, c) {
     if (!shape || r < 0 || c < 0) return false;
     for (let i = 0; i < shape.length; i++) {
@@ -980,7 +1021,6 @@
   function checkAndClear() {
     const rs = [], cs = [];
 
-    // ✅ 1 或 2 都視為滿格
     for (let r = 0; r < GRID_SIZE; r++) {
       if (grid[r].every(v => v !== 0)) rs.push(r);
     }
@@ -996,11 +1036,10 @@
     const lines = rs.length + cs.length;
     if (lines <= 0) return false;
 
-    // ✅ 消除畫面抖動（screen shake）
+    // ✅ 清除抖動
     shakeIntensity = Math.max(shakeIntensity, lines * 8);
-    console.log("[CLEAR] lines=", lines, "shake=", shakeIntensity);
 
-    // ✅ combo 計數
+    // ✅ combo++
     currentComboCount++;
     updateComboUI();
 
@@ -1023,7 +1062,7 @@
       tier, base, multiLineBonus, baseTotal, multiplier, gain
     );
 
-    // ✅ 計算要清掉的格子（rows + cols 合併去重）
+    // ✅ 清除格子集合（rows+cols 去重）
     const clearedSet = new Set();
     for (const r of rs) for (let c = 0; c < GRID_SIZE; c++) clearedSet.add(`${r},${c}`);
     for (const c of cs) for (let r = 0; r < GRID_SIZE; r++) clearedSet.add(`${r},${c}`);
@@ -1035,7 +1074,6 @@
 
     // ✅ 閃光 + 粒子
     spawnLineFlash(rs, cs);
-    console.log("[CLEAR] cells=", clearedCells.length);
     spawnClearParticles(clearedCells);
 
     // ✅ 淡出清除
@@ -1153,18 +1191,15 @@
     bounceToY = home.y;
   }
 
-  // ✅ 防當機：Promise timeout helper（避免 Firestore 卡死）
-  function withTimeout(promise, ms, label = "timeout") {
-    return Promise.race([
-      promise,
-      new Promise((_, reject) => setTimeout(() => reject(new Error(label + " " + ms + "ms")), ms))
-    ]);
-  }
-
-  // ✅ GAME OVER：先顯示排行榜（不等待上傳），再背景上傳分數
+  // ✅ GAME OVER：先顯示視窗+分數，Firestore/排行榜在背景跑（避免卡死）
   function onGameOver() {
+    // UI 先出來（避免 await 卡住）
     switchTab("board");
     showOverlay();
+
+    gameOverPanel.style.display = "block";
+    goScore.textContent = `${score}分`;
+
     boardStatus.textContent = "正在結算/上傳分數中...";
 
     const name = getPlayerName();
@@ -1173,15 +1208,15 @@
       return;
     }
 
+    // 背景處理：上傳 + 刷新排行榜（都有 timeout 保護）
     (async () => {
       try {
         await withTimeout(remoteUpsertBest(name, score), 3500, "Firestore write timeout");
-        console.log("[LB] upsert ok:", { name, score, deviceUid });
         boardStatus.textContent = "分數已上傳，排行榜更新中...";
         await refreshBoardUI();
       } catch (e) {
-        console.error("[LB] upsert FAILED:", e);
-        boardStatus.textContent = "⚠️ 分數上傳失敗（網路/Firestore timeout）。你仍可查看排行榜。";
+        console.error("[LB] upsert/refresh FAILED:", e);
+        boardStatus.textContent = "⚠️ 分數上傳或更新超時（網路/Firestore）。你仍可查看排行榜。";
         try { await refreshBoardUI(); } catch (_) {}
       }
     })();

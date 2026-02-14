@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>9x9 拼圖消消樂 - T型加入版</title>
+    <style>
+        body {
+            background-color: #1a1a1a;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            height: 100vh;
+            justify-content: center;
+            overflow: hidden;
+        }
+        .header {
+            width: 750px;
+            display: flex;
+            justify-content: center;
+            align-items: flex-end;
+            position: relative;
+            margin-bottom: 15px;
+        }
+        #highScoreContainer {
+            position: absolute; left: 0; bottom: 5px;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 5px 15px; border-radius: 5px; border-left: 4px solid #FFD700;
+        }
+        #scoreDisplay {
+            font-size: 80px; font-weight: bold; font-family: 'Arial Black', sans-serif;
+        }
+        canvas {
+            background-color: #222;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+        }
+        #restartBtn {
+            display: none;
+            position: absolute; top: 60%; left: 50%;
+            transform: translate(-50%, -50%);
+            padding: 15px 40px; font-size: 20px; font-weight: bold;
+            color: white; border: none; border-radius: 30px;
+            cursor: pointer; z-index: 100;
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div id="highScoreContainer">
+        <div style="font-size:12px;color:#aaa;">BEST</div>
+        <div id="highScore">0</div>
+    </div>
+    <div id="scoreDisplay">0</div>
+</div>
+
+<div style="position: relative;">
+    <canvas id="gameCanvas"></canvas>
+    <button id="restartBtn" onclick="resetGame()">PLAY AGAIN</button>
+</div>
+
+<script>
+const GRID_SIZE = 9;
+const CELL_SIZE = 55;
+const SIDEBAR = 250;
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const restartBtn = document.getElementById('restartBtn');
+
+canvas.width = (GRID_SIZE * CELL_SIZE) + SIDEBAR;
+canvas.height = GRID_SIZE * CELL_SIZE;
+
+const THEMES = [
+    { main: '#4A90E2', dark: '#21508A', light: '#A4C8F5' }, 
+    { main: '#50E3C2', dark: '#2A8F79', light: '#B2F2E5' }, 
+    { main: '#F5A623', dark: '#A36B0D', light: '#FCD9A1' }  
+];
+
+const SHAPE_DEFS = [
+    { shape: [[0,0], [0,1]], weight: 10 },
+    { shape: [[0,0], [1,0]], weight: 10 },
+    { shape: [[0,0], [0,1], [1,0], [1,1]], weight: 10 },
+    { shape: [[0,0], [0,1], [0,2]], weight: 10 },
+    { shape: [[0,0], [1,0], [2,0]], weight: 10 },
+    { shape: [[0,0], [1,0], [1,1]], weight: 10 },
+    { shape: [[0,0]], weight: 10 },
+    { shape: [[0,0], [0,1], [0,2], [0,3]], weight: 10 },
+    { shape: [[0,0], [1,0], [2,0], [3,0]], weight: 10 },
+    { shape: [[0,0], [1,0], [1,1], [2,1]], weight: 10 },
+    { shape: [[0,1], [0,2], [1,0], [1,1]], weight: 10 },
+    { shape: [[0,0], [1,0], [2,0], [2,1]], weight: 10 },
+    { shape: [[0,1], [1,1], [2,1], [2,0]], weight: 10 },
+    { shape: [[0,0], [0,1], [0,2], [1,0]], weight: 10 },
+    
+    // --- 新增短 T 系列 (權重 10) ---
+    { shape: [[0,1], [1,0], [1,1], [1,2]], weight: 10 }, // 正 T
+    { shape: [[0,0], [0,1], [0,2], [1,1]], weight: 10 }, // 倒 T
+    { shape: [[0,0], [1,0], [2,0], [1,1]], weight: 10 }, // 右 T
+    { shape: [[0,1], [1,1], [2,1], [1,0]], weight: 10 }, // 左 T
+
+    // --- 特殊方塊 (權重 3) ---
+    { shape: [[0,0], [0,1], [0,2], [1,0], [2,0]], weight: 3 }, // 大 L
+    { shape: [[0,1], [1,0], [1,1], [1,2], [2,1]], weight: 3 }, // 十字
+    { shape: [[0,0], [0,1], [0,2], [1,0], [1,1], [1,2], [2,0], [2,1], [2,2]], weight: 3 } // 大田
+];
+
+let currentTheme, grid, hand, score, highScore, draggingIdx, mouseX, mouseY, gameOver;
+let particles = [], floatingTexts = [], shakeIntensity = 0, currentComboCount = 0;
+
+function pathRoundedRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+}
+
+function drawBlock(x, y, size, r, theme, alpha = 1.0) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    pathRoundedRect(x, y, size, size, r);
+    let g = ctx.createLinearGradient(x, y, x + size, y + size);
+    g.addColorStop(0, theme.light);
+    g.addColorStop(1, theme.dark);
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.2)";
+    ctx.beginPath();
+    ctx.arc(x + size*0.3, y + size*0.3, size*0.15, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+}
+
+function spawnExplosion(x, y) {
+    for (let i = 0; i < 8; i++) {
+        particles.push({
+            x: x, y: y,
+            vx: (Math.random() - 0.5) * 12,
+            vy: (Math.random() - 0.5) * 12 - 3,
+            life: 1.0, size: Math.random() * 6 + 4
+        });
+    }
+}
+
+function resetGame() {
+    currentTheme = THEMES[Math.floor(Math.random() * THEMES.length)];
+    restartBtn.style.backgroundColor = currentTheme.main;
+    grid = Array(GRID_SIZE).fill().map(() => Array(GRID_SIZE).fill(0));
+    score = 0;
+    highScore = localStorage.getItem('blockHighScore') || 0;
+    gameOver = false;
+    particles = []; floatingTexts = []; currentComboCount = 0;
+    document.getElementById('scoreDisplay').innerText = "0";
+    document.getElementById('highScore').innerText = highScore;
+    restartBtn.style.display = "none";
+    refreshHand();
+}
+
+function refreshHand() {
+    hand = [];
+    for(let i=0; i<3; i++) {
+        let totalW = SHAPE_DEFS.reduce((s, x) => s + x.weight, 0);
+        let rand = Math.random() * totalW;
+        let chosen = SHAPE_DEFS[0].shape;
+        for(let def of SHAPE_DEFS) {
+            if(rand < def.weight) { chosen = def.shape; break; }
+            rand -= def.weight;
+        }
+        hand.push(chosen);
+    }
+}
+
+function canPlace(shape, r, c) {
+    if (!shape || r < 0 || c < 0) return false;
+    for (let i = 0; i < shape.length; i++) {
+        let nr = r + shape[i][0];
+        let nc = c + shape[i][1];
+        if (nr >= GRID_SIZE || nc >= GRID_SIZE || grid[nr][nc] === 1) return false;
+    }
+    return true;
+}
+
+function checkAndClear() {
+    let rs = [], cs = [];
+    for(let r=0; r<GRID_SIZE; r++) if(grid[r].every(v => v === 1)) rs.push(r);
+    for(let c=0; c<GRID_SIZE; c++) {
+        let full = true;
+        for(let r=0; r<GRID_SIZE; r++) if(grid[r][c] === 0) full = false;
+        if(full) cs.push(c);
+    }
+    
+    if(rs.length + cs.length > 0) {
+        currentComboCount++;
+        let lines = rs.length + cs.length;
+        let gain = (lines * GRID_SIZE) + (lines - 1) * 5 + (currentComboCount * 5);
+        updateScore(gain);
+        shakeIntensity = lines * 8;
+        let praise = ["", "Good！", "Nice Play！", "Great！", "Perfect！", "GOD LIKE！"][Math.min(currentComboCount, 5)];
+        floatingTexts.push({txt: praise, x: (GRID_SIZE*CELL_SIZE)/2, y: (GRID_SIZE*CELL_SIZE)/2-30, life:1, size:25+currentComboCount*5});
+        
+        rs.forEach(r => { for(let c=0; c<GRID_SIZE; c++) { spawnExplosion(c*CELL_SIZE+CELL_SIZE/2, r*CELL_SIZE+CELL_SIZE/2); grid[r][c]=0; }});
+        cs.forEach(c => { for(let r=0; r<GRID_SIZE; r++) { spawnExplosion(c*CELL_SIZE+CELL_SIZE/2, r*CELL_SIZE+CELL_SIZE/2); grid[r][c]=0; }});
+    } else {
+        currentComboCount = 0;
+    }
+}
+
+function updateScore(gain) {
+    score += gain;
+    document.getElementById('scoreDisplay').innerText = score;
+    if(score > highScore) { 
+        highScore = score; localStorage.setItem('blockHighScore', score);
+        document.getElementById('highScore').innerText = score;
+    }
+}
+
+function animate() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    if(shakeIntensity > 0) { ctx.translate((Math.random()-0.5)*shakeIntensity, (Math.random()-0.5)*shakeIntensity); shakeIntensity *= 0.8; }
+
+    ctx.fillStyle = '#333';
+    for(let r=0; r<GRID_SIZE; r++) for(let c=0; c<GRID_SIZE; c++) {
+        ctx.fillRect(c*CELL_SIZE + 2, r*CELL_SIZE + 2, CELL_SIZE-4, CELL_SIZE-4);
+    }
+
+    for(let r=0; r<GRID_SIZE; r++) for(let c=0; c<GRID_SIZE; c++) {
+        if(grid[r][c]) drawBlock(c*CELL_SIZE + 2, r*CELL_SIZE + 2, CELL_SIZE-4, 8, currentTheme);
+    }
+
+    if(draggingIdx !== null && hand[draggingIdx]) {
+        let r = Math.round((mouseY-25)/CELL_SIZE), c = Math.round((mouseX-25)/CELL_SIZE);
+        if(canPlace(hand[draggingIdx], r, c)) {
+            for(let coord of hand[draggingIdx]) drawBlock((c+coord[1])*CELL_SIZE + 2, (r+coord[0])*CELL_SIZE + 2, CELL_SIZE-4, 8, currentTheme, 0.3);
+        }
+    }
+
+    hand.forEach((s, i) => {
+        if(!s || i === draggingIdx) return;
+        let bx = GRID_SIZE*CELL_SIZE + 60, by = 60 + i * 150;
+        for(let coord of s) drawBlock(bx + coord[1]*22, by + coord[0]*22, 20, 4, currentTheme);
+    });
+
+    if(draggingIdx !== null && hand[draggingIdx]) {
+        for(let coord of hand[draggingIdx]) drawBlock(mouseX + coord[1]*CELL_SIZE-25, mouseY + coord[0]*CELL_SIZE-25, CELL_SIZE-4, 8, currentTheme);
+    }
+
+    particles.forEach((p, i) => {
+        p.x += p.vx; p.y += p.vy; p.vy += 0.4; p.life -= 0.02;
+        if (p.life <= 0) particles.splice(i, 1);
+        else { ctx.save(); ctx.globalAlpha = p.life; ctx.fillStyle = currentTheme.main; ctx.fillRect(p.x, p.y, p.size, p.size); ctx.restore(); }
+    });
+
+    floatingTexts.forEach((t, i) => {
+        t.y -= 1; t.life -= 0.02;
+        ctx.globalAlpha = Math.max(0, t.life); ctx.fillStyle = "#FFD700"; ctx.textAlign = "center";
+        ctx.font = "bold " + t.size + "px Arial"; ctx.fillText(t.txt, t.x, t.y);
+        if(t.life <= 0) floatingTexts.splice(i, 1);
+    });
+
+    if(gameOver) {
+        ctx.fillStyle = "rgba(0,0,0,0.8)"; ctx.fillRect(0,0,canvas.width,canvas.height);
+        ctx.fillStyle = "white"; ctx.font = "40px Arial"; ctx.textAlign = "center";
+        ctx.fillText("GAME OVER", canvas.width/2, canvas.height/2);
+        restartBtn.style.display = "block";
+    }
+    ctx.restore();
+    requestAnimationFrame(animate);
+}
+
+canvas.addEventListener('mousedown', e => {
+    if(gameOver) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left, y = e.clientY - rect.top;
+    if(x > GRID_SIZE * CELL_SIZE) {
+        let idx = Math.floor((y - 40) / 150);
+        if(idx >= 0 && idx < 3 && hand[idx]) draggingIdx = idx;
+    }
+});
+window.addEventListener('mousemove', e => {
+    const rect = canvas.getBoundingClientRect();
+    mouseX = e.clientX - rect.left; mouseY = e.clientY - rect.top;
+});
+window.addEventListener('mouseup', () => {
+    if(draggingIdx !== null) {
+        let r = Math.round((mouseY-25)/CELL_SIZE), c = Math.round((mouseX-25)/CELL_SIZE);
+        if(canPlace(hand[draggingIdx], r, c)) {
+            for(let coord of hand[draggingIdx]) grid[r+coord[0]][c+coord[1]] = 1;
+            hand[draggingIdx] = null;
+            checkAndClear();
+            if(hand.every(h => h === null)) refreshHand();
+            let dead = true;
+            for(let s of hand) {
+                if(!s) continue;
+                for(let i=0; i<GRID_SIZE; i++) {
+                    for(let j=0; j<GRID_SIZE; j++) if(canPlace(s, i, j)) { dead = false; break; }
+                    if(!dead) break;
+                }
+            }
+            if(dead) gameOver = true;
+        }
+        draggingIdx = null;
+    }
+});
+
+resetGame();
+animate();
+</script>
+</body>
+</html>

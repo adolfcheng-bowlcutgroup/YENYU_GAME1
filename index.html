@@ -1008,7 +1008,7 @@ function animate() {
   // 失敗紅提示 overlay
   if (failOverlayLife > 0) {
     ctx.save();
-    ctx.globalAlpha = 0.35 * failOverlayLife;
+    ctx.globalAlpha = 0 * failOverlayLife;
     ctx.fillStyle = "rgba(255, 60, 60, 1)";
     ctx.fillRect(layout.gridX, layout.gridY, GRID_SIZE * CELL_SIZE, GRID_SIZE * CELL_SIZE);
     ctx.restore();
@@ -1051,3 +1051,4 @@ animate();
 
 </body>
 </html>
+

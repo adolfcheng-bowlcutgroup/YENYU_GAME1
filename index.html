@@ -1368,10 +1368,34 @@
 
     applyLayout(computeLayout());
     resetGame();
+    async function lbSelfTest() {
+    const ref = doc(db, LEADERBOARD_COL, deviceUid);
+    console.log("[LB] selftest uid =", deviceUid);
+
+    // 1) 讀自己
+    try {
+      const snap = await getDoc(ref);
+      console.log("[LB] selftest getDoc ok. exists =", snap.exists(), snap.exists() ? snap.data() : null);
+    } catch (e) {
+      console.error("[LB] selftest getDoc FAILED:", e);
+      boardStatus.textContent = "⚠️ 讀取 Firestore 失敗（請開 Console）";
+    }
+
+    // 2) 寫一個很小的測試欄位（不影響 score）
+    try {
+      await setDoc(ref, { uid: deviceUid, name: getPlayerName() || "TEST", ping: Date.now() }, { merge: true });
+      console.log("[LB] selftest setDoc ok");
+    } catch (e) {
+      console.error("[LB] selftest setDoc FAILED:", e);
+      boardStatus.textContent = "⚠️ 寫入 Firestore 失敗（請開 Console）";
+    }
+  }
+
 
     showOverlay();
     switchTab("login");
     animate();
+    lbSelfTest();
   })();
 </script>
 

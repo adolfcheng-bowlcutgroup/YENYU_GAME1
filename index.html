@@ -162,7 +162,9 @@
       cursor:pointer;
       color:#111;
     }
-    .btnPrimary{ background: #FFD700; }
+    .btnPrimary{
+      background: #FFD700;
+    }
     .btnGhost{
       background: rgba(255,255,255,0.10);
       color:#fff;
@@ -211,8 +213,13 @@
       font-weight: 900;
       color: rgba(255,255,255,0.88);
     }
-    .muted{ color: rgba(255,255,255,0.60); font-weight: 800; }
-    .right{ text-align:right; }
+    .muted{
+      color: rgba(255,255,255,0.60);
+      font-weight: 800;
+    }
+    .right{
+      text-align:right;
+    }
     .meRow{
       background: rgba(255,215,0,0.10);
       border-top: 1px solid rgba(255,215,0,0.22);
@@ -227,7 +234,6 @@
       color: rgba(255,255,255,0.60);
       margin-top: 10px;
       line-height: 1.5;
-      white-space: pre-line;
     }
   </style>
 </head>
@@ -243,7 +249,7 @@
 
     <div id="comboBadge">
       <span class="label">COMBO</span>
-      <span class="value" id="comboCount">x1</span>
+      <span class="value" id="comboCount">x0</span>
     </div>
   </div>
 
@@ -279,8 +285,7 @@
 
           <div class="hint">
             - 排行榜是「全球榜」：會看到網路上其他玩家分數。<br/>
-            - 左上角 BEST 仍是你自己裝置的最高分（不影響）。<br/>
-            - 右下角 Console 會印出 Firestore 自檢/錯誤（方便定位）。
+            - 左上角 BEST 仍是你自己裝置的最高分（不影響）。
           </div>
         </div>
 
@@ -309,7 +314,6 @@
 <script type="module">
   /* =========================================================
    *  Firebase（Firestore 全球榜）
-   *  ✅ 新增：timeout + 自檢 lbSelfTest
    * ========================================================= */
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
   import {
@@ -344,39 +348,31 @@
   }
   const deviceUid = getOrCreateDeviceUid();
 
-  function withTimeout(promise, ms = 6000) {
-    return Promise.race([
-      promise,
-      new Promise((_, rej) => setTimeout(() => rej(new Error("Firestore timeout " + ms + "ms")), ms))
-    ]);
-  }
-
   async function remoteUpsertBest(name, score) {
     name = (name || "").trim().slice(0, 16);
     if (!name) return;
 
     const ref = doc(db, LEADERBOARD_COL, deviceUid);
     console.log("[LB] writing to", LEADERBOARD_COL, deviceUid, { name, score });
-
-    const snap = await withTimeout(getDoc(ref), 6000);
+    const snap = await getDoc(ref);
     const prev = snap.exists() ? Number(snap.data().score || 0) : 0;
 
     if (score > prev) {
-      await withTimeout(setDoc(ref, { uid: deviceUid, name, score, updatedAt: serverTimestamp() }, { merge: true }), 6000);
+      await setDoc(ref, { uid: deviceUid, name, score, updatedAt: serverTimestamp() }, { merge: true });
     } else {
-      await withTimeout(setDoc(ref, { uid: deviceUid, name, updatedAt: serverTimestamp() }, { merge: true }), 6000);
+      await setDoc(ref, { uid: deviceUid, name, updatedAt: serverTimestamp() }, { merge: true });
     }
   }
 
   async function remoteFetchTop(topN = 10) {
     const q = query(collection(db, LEADERBOARD_COL), orderBy("score", "desc"), limit(topN));
-    const snap = await withTimeout(getDocs(q), 6000);
+    const snap = await getDocs(q);
     return snap.docs.map(d => d.data());
   }
 
   async function remoteFetchMe() {
     const ref = doc(db, LEADERBOARD_COL, deviceUid);
-    const snap = await withTimeout(getDoc(ref), 6000);
+    const snap = await getDoc(ref);
     return snap.exists() ? snap.data() : null;
   }
 
@@ -384,7 +380,7 @@
     if (typeof myScore !== "number") return null;
     const col = collection(db, LEADERBOARD_COL);
     const q = query(col, where("score", ">", myScore));
-    const agg = await withTimeout(getCountFromServer(q), 6000);
+    const agg = await getCountFromServer(q);
     const higher = agg.data().count || 0;
     return higher + 1;
   }
@@ -527,10 +523,7 @@
       boardStatus.textContent = "已更新（全球排行）。";
     } catch (e) {
       console.error("Leaderboard error:", e);
-      boardStatus.textContent =
-        "排行榜讀取失敗。\n" +
-        "請開 Console 看錯誤訊息。\n" +
-        (e?.message ? ("錯誤：" + e.message) : "");
+      boardStatus.textContent = "排行榜讀取失敗。請開 Console 看錯誤訊息。";
       const err = document.createElement("div");
       err.className = "boardRow";
       err.innerHTML = `
@@ -543,33 +536,7 @@
   }
 
   /* =========================================================
-   *  ✅ Firestore 自檢：讀/寫各一次（立即抓出規則/網路問題）
-   * ========================================================= */
-  async function lbSelfTest() {
-    // 只在 Console 看到也行；若你想在 UI 看到，切到排行榜 tab 就會顯示 boardStatus
-    console.log("[LB] selftest uid =", deviceUid);
-
-    const ref = doc(db, LEADERBOARD_COL, deviceUid);
-
-    try {
-      const snap = await withTimeout(getDoc(ref), 6000);
-      console.log("[LB] selftest getDoc ok. exists =", snap.exists(), snap.exists() ? snap.data() : null);
-    } catch (e) {
-      console.error("[LB] selftest getDoc FAILED:", e);
-      boardStatus.textContent = "⚠️ Firestore 讀取失敗（請開 Console）\n" + (e?.message || "");
-    }
-
-    try {
-      await withTimeout(setDoc(ref, { uid: deviceUid, name: getPlayerName() || "TEST", ping: Date.now() }, { merge: true }), 6000);
-      console.log("[LB] selftest setDoc ok");
-    } catch (e) {
-      console.error("[LB] selftest setDoc FAILED:", e);
-      boardStatus.textContent = "⚠️ Firestore 寫入失敗（請開 Console）\n" + (e?.message || "");
-    }
-  }
-
-  /* =========================================================
-   *  遊戲本體（保留你原本的結構；此處略去一些非核心特效也不影響排行榜測試）
+   *  遊戲本體（吸附/回彈/紅色提示/特效/Combo）
    * ========================================================= */
   const GRID_SIZE = 9;
   const CELL_SIZE = 55;
@@ -598,6 +565,11 @@
 
   let particles = [];
   let lineFlashes = [];
+
+  // === Clear animation state ===
+  // grid cell: 0 empty, 1 filled, 2 clearing (fade-out)
+  let clearingCells = [];                 // array of {r,c,life}
+  let clearingMap = new Map();            // key "r,c" -> {life}
 
   let dragStartPX = 0, dragStartPY = 0;
   let dragStartAX = 0, dragStartAY = 0;
@@ -631,7 +603,10 @@
     { shape: [[0,0],[1,0],[1,1],[2,1]], weight: 10 },
     { shape: [[0,1],[0,2],[1,0],[1,1]], weight: 10 },
     { shape: [[0,1],[1,0],[1,1],[1,2]], weight: 10 },
-    { shape: [[0,0],[1,0],[2,0],[2,1]], weight: 10 }
+    { shape: [[0,0],[1,0],[2,0],[2,1]], weight: 10 },
+    { shape: [[0,0],[0,1],[0,2],[1,0],[2,0]], weight: 3 },
+    { shape: [[0,1],[1,0],[1,1],[1,2],[2,1]], weight: 3 },
+    { shape: [[0,0],[0,1],[0,2],[1,0],[1,1],[1,2],[2,0],[2,1],[2,2]], weight: 3 }
   ];
 
   let currentTheme;
@@ -644,6 +619,7 @@
   let shakeIntensity = 0;
   let currentComboCount = 0;
 
+  let floatingTexts = [];
   let layout = null;
 
   function getComboTier(combo) {
@@ -654,17 +630,24 @@
     return             { name:"GOOD",    color:"#FFFFFF", glow:"rgba(255,255,255,0.30)", border:"rgba(255,255,255,0.20)" };
   }
 
+  // ✅ COMBO UI 常駐，無 combo 顯示 x0
   function updateComboUI() {
+    comboBadge.style.display = "inline-flex";
+    comboBadge.style.alignItems = "center";
+
+    const shown = Math.max(0, currentComboCount);
+    comboCountEl.innerText = "x" + shown;
+
+    const tier = getComboTier(1);
     if (currentComboCount > 0) {
-      comboBadge.style.display = "inline-flex";
-      comboBadge.style.alignItems = "center";
-      comboCountEl.innerText = "x" + currentComboCount;
-      const tier = getComboTier(currentComboCount);
-      comboBadge.style.borderColor = tier.border;
-      comboBadge.style.boxShadow = `0 0 18px ${tier.glow}`;
+      const t2 = getComboTier(currentComboCount);
+      comboBadge.style.borderColor = t2.border;
+      comboBadge.style.boxShadow = `0 0 18px ${t2.glow}`;
       comboBadge.style.opacity = "1";
     } else {
-      comboBadge.style.display = "none";
+      comboBadge.style.borderColor = "rgba(255,255,255,0.18)";
+      comboBadge.style.boxShadow = "none";
+      comboBadge.style.opacity = "0.55";
     }
   }
 
@@ -762,10 +745,24 @@
     ctx.restore();
   }
 
+  function drawTextWithStroke(txt, x, y, size, color, stroke = "rgba(0,0,0,0.55)", align = "center") {
+    ctx.save();
+    ctx.font = `900 ${size}px Arial`;
+    ctx.textAlign = align;
+    ctx.textBaseline = "middle";
+    ctx.lineWidth = Math.max(3, size * 0.12);
+    ctx.strokeStyle = stroke;
+    ctx.fillStyle = color;
+    ctx.strokeText(txt, x, y);
+    ctx.fillText(txt, x, y);
+    ctx.restore();
+  }
+
   function resetGame() {
     applyLayout(computeLayout());
 
     currentTheme = THEMES[Math.floor(Math.random() * THEMES.length)];
+
     grid = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(0));
     score = 0;
     highScore = Number(localStorage.getItem('blockHighScore') || 0);
@@ -773,8 +770,15 @@
     gameOver = false;
     shakeIntensity = 0;
     currentComboCount = 0;
+    floatingTexts = [];
+    particles = [];
+    lineFlashes = [];
     failOverlayLife = 0;
     bounceLife = 0;
+
+    // clear-anim state
+    clearingCells = [];
+    clearingMap.clear();
 
     document.getElementById('scoreDisplay').innerText = "0";
     document.getElementById('highScore').innerText = String(highScore);
@@ -798,32 +802,187 @@
     }
   }
 
+  // ✅ clearing(2) 也視為佔用，避免放置/判定穿模
   function canPlace(shape, r, c) {
     if (!shape || r < 0 || c < 0) return false;
     for (let i = 0; i < shape.length; i++) {
       const nr = r + shape[i][0];
       const nc = c + shape[i][1];
-      if (nr >= GRID_SIZE || nc >= GRID_SIZE || grid[nr][nc] === 1) return false;
+      if (nr >= GRID_SIZE || nc >= GRID_SIZE || grid[nr][nc] !== 0) return false;
     }
     return true;
   }
 
+  function spawnClearParticles(cells) {
+    for (const {r, c} of cells) {
+      const cx = layout.gridX + c * CELL_SIZE + CELL_SIZE / 2;
+      const cy = layout.gridY + r * CELL_SIZE + CELL_SIZE / 2;
+
+      const n = 10 + Math.floor(Math.random() * 6);
+      for (let i = 0; i < n; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const spd = 2 + Math.random() * 6;
+        particles.push({
+          x: cx, y: cy,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd - 1.5,
+          life: 1,
+          size: 2 + Math.random() * 3
+        });
+      }
+    }
+  }
+
+  function updateAndDrawParticles() {
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.life -= 0.03;
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy += 0.2;
+      p.vx *= 0.98;
+      p.vy *= 0.98;
+
+      if (p.life <= 0) { particles.splice(i, 1); continue; }
+
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = "rgba(255, 215, 0, 1)";
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "rgba(255,255,255,0.65)";
+      ctx.beginPath();
+      ctx.arc(p.x - 1, p.y - 1, p.size * 0.55, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  function spawnLineFlash(rows, cols) {
+    for (const r of rows) lineFlashes.push({ type:'row', idx:r, life:1 });
+    for (const c of cols) lineFlashes.push({ type:'col', idx:c, life:1 });
+  }
+
+  function updateAndDrawLineFlashes() {
+    for (let i = lineFlashes.length - 1; i >= 0; i--) {
+      const f = lineFlashes[i];
+      f.life -= 0.06;
+      if (f.life <= 0) { lineFlashes.splice(i, 1); continue; }
+
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, f.life);
+      ctx.fillStyle = "rgba(255,255,255,0.65)";
+      if (f.type === 'row') {
+        const y = layout.gridY + f.idx * CELL_SIZE;
+        ctx.fillRect(layout.gridX, y, GRID_SIZE * CELL_SIZE, CELL_SIZE);
+      } else {
+        const x = layout.gridX + f.idx * CELL_SIZE;
+        ctx.fillRect(x, layout.gridY, CELL_SIZE, GRID_SIZE * CELL_SIZE);
+      }
+      ctx.restore();
+    }
+  }
+
+  function pushFloatingBreakdown(x, y, tier, base, multi, comboBonus, gain) {
+    const lines = [];
+    lines.push({ txt: tier.name, color: tier.color, sizeMul: 1.25 });
+    lines.push({ txt: `+${gain} TOTAL`, color: "#FFD700", sizeMul: 1.05 });
+    lines.push({ txt: `+${base} Base`, color: "rgba(255,255,255,0.95)", sizeMul: 0.85 });
+    if (multi > 0) lines.push({ txt: `+${multi} Multi`, color: "rgba(124,252,255,0.95)", sizeMul: 0.85 });
+    lines.push({ txt: `+${comboBonus} Combo`, color: "rgba(183,255,106,0.95)", sizeMul: 0.85 });
+
+    floatingTexts.push({
+      lines,
+      x, y,
+      life: 1,
+      vy: 1.25,
+      size: 28,
+      align: "center",
+      stroke: "rgba(0,0,0,0.65)"
+    });
+  }
+
+  function updateAndDrawFloatingTexts() {
+    for (let i = floatingTexts.length - 1; i >= 0; i--) {
+      const t = floatingTexts[i];
+      t.y -= t.vy;
+      t.life -= 0.02;
+
+      const alpha = Math.max(0, t.life);
+      if (alpha <= 0) { floatingTexts.splice(i, 1); continue; }
+
+      let y = t.y;
+      for (let j = 0; j < t.lines.length; j++) {
+        const line = t.lines[j];
+        const sz = t.size * (line.sizeMul ?? 1);
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        drawTextWithStroke(line.txt, t.x, y, sz, line.color, t.stroke, t.align);
+        ctx.restore();
+        y += sz * 1.05;
+      }
+    }
+  }
+
+  function calcGain(lines, comboCount) {
+    const base = lines * GRID_SIZE;
+    const multiLineBonus = Math.max(0, lines - 1) * 16;
+    const comboBonus = 25 + (comboCount - 1) * 20;
+    const gain = base + multiLineBonus + comboBonus;
+    return { base, multiLineBonus, comboBonus, gain };
+  }
+
+  function startClearingCells(clearedCells) {
+    for (const { r, c } of clearedCells) {
+      if (grid[r][c] === 1) {
+        grid[r][c] = 2; // clearing
+        const key = `${r},${c}`;
+        if (!clearingMap.has(key)) {
+          const obj = { r, c, life: 1 };
+          clearingCells.push(obj);
+          clearingMap.set(key, obj);
+        } else {
+          // 若重複觸發，刷新生命
+          clearingMap.get(key).life = 1;
+        }
+      }
+    }
+  }
+
+  function updateClearingCells() {
+    for (let i = clearingCells.length - 1; i >= 0; i--) {
+      const cc = clearingCells[i];
+      cc.life -= 0.08; // 淡出速度
+      if (cc.life <= 0) {
+        if (grid[cc.r][cc.c] === 2) grid[cc.r][cc.c] = 0;
+        clearingMap.delete(`${cc.r},${cc.c}`);
+        clearingCells.splice(i, 1);
+      }
+    }
+  }
+
   function checkAndClear() {
     const rs = [], cs = [];
-    for (let r = 0; r < GRID_SIZE; r++) if (grid[r].every(v => v === 1)) rs.push(r);
+
+    // ✅ 1 或 2 都視為滿格（clearing 還沒真正變空前）
+    for (let r = 0; r < GRID_SIZE; r++) if (grid[r].every(v => v !== 0)) rs.push(r);
+
     for (let c = 0; c < GRID_SIZE; c++) {
       let full = true;
       for (let r = 0; r < GRID_SIZE; r++) if (grid[r][c] === 0) full = false;
       if (full) cs.push(c);
     }
+
     const lines = rs.length + cs.length;
     if (lines <= 0) return false;
 
     currentComboCount++;
     updateComboUI();
 
-    // 簡化加分（保留可玩）
-    score += lines * GRID_SIZE + 25 + (currentComboCount - 1) * 20;
+    const { base, multiLineBonus, comboBonus, gain } = calcGain(lines, currentComboCount);
+    score += gain;
     document.getElementById('scoreDisplay').innerText = String(score);
 
     if (score > highScore) {
@@ -832,8 +991,28 @@
       document.getElementById('highScore').innerText = String(score);
     }
 
-    rs.forEach(r => { for (let c = 0; c < GRID_SIZE; c++) grid[r][c] = 0; });
-    cs.forEach(c => { for (let r = 0; r < GRID_SIZE; r++) grid[r][c] = 0; });
+    const clearedSet = new Set();
+    for (const r of rs) for (let c = 0; c < GRID_SIZE; c++) clearedSet.add(`${r},${c}`);
+    for (const c of cs) for (let r = 0; r < GRID_SIZE; r++) clearedSet.add(`${r},${c}`);
+    const clearedCells = Array.from(clearedSet).map(s => {
+      const [r, c] = s.split(',').map(Number);
+      return { r, c };
+    });
+
+    // ✅ 特效：閃線 + 粒子 + 震動 + 浮字
+    spawnLineFlash(rs, cs);
+    spawnClearParticles(clearedCells);
+    shakeIntensity = Math.max(shakeIntensity, lines * 8);
+
+    const tier = getComboTier(currentComboCount);
+    pushFloatingBreakdown(
+      layout.gridX + (GRID_SIZE * CELL_SIZE) / 2,
+      layout.gridY + (GRID_SIZE * CELL_SIZE) / 2 - 60,
+      tier, base, multiLineBonus, comboBonus, gain
+    );
+
+    // ✅ 不要立刻清 0，先進入 clearing 狀態做淡出
+    startClearingCells(clearedCells);
 
     return true;
   }
@@ -917,6 +1096,18 @@
   function failFeedback() {
     shakeIntensity = Math.max(shakeIntensity, FAIL_SHAKE);
     failOverlayLife = 1;
+
+    floatingTexts.push({
+      lines: [{ txt: "放不下！", color: "#FF6A6A", sizeMul: 1.1 }],
+      x: layout.gridX + (GRID_SIZE * CELL_SIZE) / 2,
+      y: layout.gridY + (GRID_SIZE * CELL_SIZE) / 2 - 30,
+      life: 1,
+      vy: 1.1,
+      size: 28,
+      align: "center",
+      stroke: "rgba(0,0,0,0.70)"
+    });
+
     if (navigator.vibrate) {
       try { navigator.vibrate(FAIL_VIBRATION_PATTERN); } catch (_) {}
     }
@@ -935,7 +1126,7 @@
     bounceToY = home.y;
   }
 
-  // ✅ GAME OVER：上傳 best + 跳排行榜
+  // GAME OVER：跳排行榜 + 顯示「再玩一局 / 回到首頁」
   async function onGameOver() {
     const name = getPlayerName();
     if (name) {
@@ -944,7 +1135,7 @@
         console.log("[LB] upsert ok:", { name, score, deviceUid });
       } catch (e) {
         console.error("[LB] upsert FAILED:", e);
-        boardStatus.textContent = "⚠️ 上傳分數失敗（請開 Console）\n" + (e?.message || "");
+        boardStatus.textContent = "⚠️ 上傳分數失敗（請開 Console 看錯誤）";
       }
     }
     switchTab("board");
@@ -1013,6 +1204,7 @@
         for (const coord of shape) grid[r + coord[0]][c + coord[1]] = 1;
         hand[draggingIdx] = null;
 
+        // combo：放置成功但沒消 -> 清 combo；放置失敗不清
         const cleared = checkAndClear();
         if (!cleared) { currentComboCount = 0; updateComboUI(); }
 
@@ -1047,6 +1239,14 @@
 
   function drawHand() {
     const { slots } = layout.hand;
+
+    if (layout.mode === "mobile") {
+      ctx.save();
+      ctx.fillStyle = "rgba(0,0,0,0.25)";
+      ctx.fillRect(layout.hand.x, layout.hand.y, layout.hand.w, layout.hand.h);
+      ctx.restore();
+    }
+
     for (let i = 0; i < 3; i++) {
       const shape = hand[i];
       const slot = slots[i];
@@ -1114,6 +1314,7 @@
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     ctx.save();
+
     if (shakeIntensity > 0) {
       ctx.translate((Math.random() - 0.5) * shakeIntensity, (Math.random() - 0.5) * shakeIntensity);
       shakeIntensity *= 0.8;
@@ -1128,55 +1329,80 @@
       ctx.fillRect(x, y, CELL_SIZE - 4, CELL_SIZE - 4);
     }
 
-    // 已放方塊
-    for (let r = 0; r < GRID_SIZE; r++) for (let c = 0; c < GRID_SIZE; c++) {
-      if (grid[r][c]) {
-        const x = layout.gridX + c * CELL_SIZE + 2;
-        const y = layout.gridY + r * CELL_SIZE + 2;
-        drawBlock(x, y, CELL_SIZE - 4, 8, currentTheme, 1);
-      }
-    }
+    if (currentTheme) {
+      // 已放方塊（含 clearing 動畫）
+      for (let r = 0; r < GRID_SIZE; r++) for (let c = 0; c < GRID_SIZE; c++) {
+        const cell = grid[r][c];
+        if (cell === 1 || cell === 2) {
+          const x = layout.gridX + c * CELL_SIZE + 2;
+          const y = layout.gridY + r * CELL_SIZE + 2;
 
-    // 拖曳 preview + 本體
-    if (draggingIdx !== null && hand[draggingIdx]) {
-      const shape = hand[draggingIdx];
-      const anchorX = dragNowAX;
-      const anchorY = dragNowAY;
+          if (cell === 1) {
+            drawBlock(x, y, CELL_SIZE - 4, 8, currentTheme, 1);
+          } else {
+            const key = `${r},${c}`;
+            const cc = clearingMap.get(key);
+            const life = cc ? Math.max(0, cc.life) : 0.5;
 
-      const best = findBestMagnet(shape, anchorX, anchorY);
-      let previewR, previewC;
-      if (best.can) { previewR = best.r; previewC = best.c; }
-      else {
-        previewR = Math.floor((anchorY - layout.gridY) / CELL_SIZE);
-        previewC = Math.floor((anchorX - layout.gridX) / CELL_SIZE);
-      }
+            drawBlock(x, y, CELL_SIZE - 4, 8, currentTheme, 0.25 + 0.75 * life);
 
-      if (canPlace(shape, previewR, previewC)) {
-        for (const coord of shape) {
-          const x = layout.gridX + (previewC + coord[1]) * CELL_SIZE + 2;
-          const y = layout.gridY + (previewR + coord[0]) * CELL_SIZE + 2;
-          drawBlock(x, y, CELL_SIZE - 4, 8, currentTheme, PREVIEW_ALPHA_OK);
+            ctx.save();
+            ctx.globalAlpha = 0.35 * life;
+            ctx.fillStyle = "rgba(255,255,255,1)";
+            pathRoundedRect(x, y, CELL_SIZE - 4, CELL_SIZE - 4, 8);
+            ctx.fill();
+            ctx.restore();
+          }
         }
-      } else {
-        ctx.save();
-        ctx.globalAlpha = PREVIEW_ALPHA_BAD;
-        ctx.fillStyle = "rgba(255,80,80,1)";
-        ctx.fillRect(layout.gridX, layout.gridY, GRID_SIZE * CELL_SIZE, GRID_SIZE * CELL_SIZE);
-        ctx.restore();
       }
 
-      const drawX = anchorX;
-      const drawY = anchorY - DRAG_LIFT;
-      for (const coord of shape) {
-        const x = drawX + coord[1] * CELL_SIZE;
-        const y = drawY + coord[0] * CELL_SIZE;
-        drawBlock(x, y, CELL_SIZE - 4, 8, currentTheme, 1);
+      updateAndDrawLineFlashes();
+
+      // 拖曳 preview + 本體
+      if (draggingIdx !== null && hand[draggingIdx]) {
+        const shape = hand[draggingIdx];
+        const anchorX = dragNowAX;
+        const anchorY = dragNowAY;
+
+        const best = findBestMagnet(shape, anchorX, anchorY);
+
+        let previewR, previewC;
+        if (best.can) { previewR = best.r; previewC = best.c; }
+        else {
+          previewR = Math.floor((anchorY - layout.gridY) / CELL_SIZE);
+          previewC = Math.floor((anchorX - layout.gridX) / CELL_SIZE);
+        }
+
+        if (canPlace(shape, previewR, previewC)) {
+          for (const coord of shape) {
+            const x = layout.gridX + (previewC + coord[1]) * CELL_SIZE + 2;
+            const y = layout.gridY + (previewR + coord[0]) * CELL_SIZE + 2;
+            drawBlock(x, y, CELL_SIZE - 4, 8, currentTheme, PREVIEW_ALPHA_OK);
+          }
+        } else {
+          ctx.save();
+          ctx.globalAlpha = PREVIEW_ALPHA_BAD;
+          ctx.fillStyle = "rgba(255,80,80,1)";
+          ctx.fillRect(layout.gridX, layout.gridY, GRID_SIZE * CELL_SIZE, GRID_SIZE * CELL_SIZE);
+          ctx.restore();
+        }
+
+        const drawX = anchorX;
+        const drawY = anchorY - DRAG_LIFT;
+        for (const coord of shape) {
+          const x = drawX + coord[1] * CELL_SIZE;
+          const y = drawY + coord[0] * CELL_SIZE;
+          drawBlock(x, y, CELL_SIZE - 4, 8, currentTheme, 1);
+        }
       }
+
+      drawHand();
+      updateAndDrawParticles();
+      updateAndDrawBounce();
+      updateAndDrawFloatingTexts();
     }
 
-    drawHand();
-    updateAndDrawBounce();
-
+    // 失敗紅色 overlay（透明度可調）
     if (failOverlayLife > 0) {
       ctx.save();
       ctx.globalAlpha = 0.30 * failOverlayLife;
@@ -1188,6 +1414,10 @@
     }
 
     ctx.restore();
+
+    // ✅ clearing 動畫更新（真正清格）
+    updateClearingCells();
+
     requestAnimationFrame(animate);
   }
 
@@ -1205,10 +1435,6 @@
     showOverlay();
     switchTab("login");
     animate();
-
-    // ✅ Firestore 自檢（刷新頁面就跑一次）
-    // 建議你切到「排行榜」tab 看 boardStatus，或直接看 console
-    lbSelfTest();
   })();
 </script>
 

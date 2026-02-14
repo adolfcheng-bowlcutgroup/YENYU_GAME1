@@ -957,20 +957,24 @@
 
   function startClearingCells(clearedCells) {
     for (const { r, c } of clearedCells) {
-      if (grid[r][c] === 1) {
-        grid[r][c] = 2; // clearing
-        const key = `${r},${c}`;
+      const key = `${r},${c}`;
+
+      // ✅ 只要不是空格，就允許進 clearing（1 或 2 都可以）
+      if (grid[r][c] !== 0) {
+        grid[r][c] = 2;
+
         if (!clearingMap.has(key)) {
           const obj = { r, c, life: 1 };
           clearingCells.push(obj);
           clearingMap.set(key, obj);
         } else {
-          // 若重複觸發，刷新生命
+          // ✅ 若重複觸發，刷新生命
           clearingMap.get(key).life = 1;
         }
       }
     }
   }
+
 
   function updateClearingCells() {
     for (let i = clearingCells.length - 1; i >= 0; i--) {
@@ -984,47 +988,74 @@
     }
   }
 
-  function checkAndClear() {
-    const rs = [], cs = [];
+function checkAndClear() {
+  const rs = [], cs = [];
 
-    // ✅ 1 或 2 都視為滿格（clearing 還沒真正變空前）
-    for (let r = 0; r < GRID_SIZE; r++) if (grid[r].every(v => v !== 0)) rs.push(r);
-
-    for (let c = 0; c < GRID_SIZE; c++) {
-      let full = true;
-      for (let r = 0; r < GRID_SIZE; r++) if (grid[r][c] === 0) full = false;
-      if (full) cs.push(c);
-    }
-
-    const lines = rs.length + cs.length;
-    if (lines <= 0) return false;
-
-    currentComboCount++;
-    updateComboUI();
-
-    const { base, multiLineBonus, baseTotal, multiplier, gain } = calcGain(lines, currentComboCount);
-    score += gain;
-    document.getElementById('scoreDisplay').innerText = String(score);
-
-    if (score > highScore) {
-      highScore = score;
-      localStorage.setItem('blockHighScore', String(score));
-      document.getElementById('highScore').innerText = String(score);
-    }
-
-    const tier = getComboTier(currentComboCount);
-    pushFloatingBreakdown(
-      layout.gridX + (GRID_SIZE * CELL_SIZE) / 2,
-      layout.gridY + (GRID_SIZE * CELL_SIZE) / 2 - 60,
-      tier, base, multiLineBonus, baseTotal, multiplier, gain
-    );
-
-
-    // ✅ 不要立刻清 0，先進入 clearing 狀態做淡出
-    startClearingCells(clearedCells);
-
-    return true;
+  // ✅ 1 或 2 都視為滿格（避免 clearing 狀態先把格子變 0 導致判定失效）
+  for (let r = 0; r < GRID_SIZE; r++) {
+    if (grid[r].every(v => v !== 0)) rs.push(r);
   }
+
+  for (let c = 0; c < GRID_SIZE; c++) {
+    let full = true;
+    for (let r = 0; r < GRID_SIZE; r++) {
+      if (grid[r][c] === 0) { full = false; break; }
+    }
+    if (full) cs.push(c);
+  }
+
+  const lines = rs.length + cs.length;
+  if (lines <= 0) return false;
+
+  // ✅ 消除畫面抖動（screen shake）
+  shakeIntensity = Math.max(shakeIntensity, lines * 8);
+  console.log("[CLEAR] lines=", lines, "shake=", shakeIntensity);
+
+  // ✅ combo 計數
+  currentComboCount++;
+  updateComboUI();
+
+  // ✅ 乘數計分
+  const { base, multiLineBonus, baseTotal, multiplier, gain } = calcGain(lines, currentComboCount);
+  score += gain;
+  document.getElementById('scoreDisplay').innerText = String(score);
+
+  if (score > highScore) {
+    highScore = score;
+    localStorage.setItem('blockHighScore', String(score));
+    document.getElementById('highScore').innerText = String(score);
+  }
+
+  // ✅ 浮字
+  const tier = getComboTier(currentComboCount);
+  pushFloatingBreakdown(
+    layout.gridX + (GRID_SIZE * CELL_SIZE) / 2,
+    layout.gridY + (GRID_SIZE * CELL_SIZE) / 2 - 60,
+    tier, base, multiLineBonus, baseTotal, multiplier, gain
+  );
+
+  // ✅ 計算要清掉的格子（rows + cols 合併去重）
+  const clearedSet = new Set();
+  for (const r of rs) for (let c = 0; c < GRID_SIZE; c++) clearedSet.add(`${r},${c}`);
+  for (const c of cs) for (let r = 0; r < GRID_SIZE; r++) clearedSet.add(`${r},${c}`);
+
+  const clearedCells = Array.from(clearedSet).map(s => {
+    const [r, c] = s.split(',').map(Number);
+    return { r, c };
+  });
+
+  // ✅ 加回：閃光 + 粒子
+  spawnLineFlash(rs, cs);
+  console.log("[CLEAR] cells=", clearedCells.length);
+  spawnClearParticles(clearedCells);
+
+  // ✅ 進入淡出清除（你自己的 clearing 系統）
+  // 你必須確保 startClearingCells 會把 grid[r][c] 從 1/2 -> 0（或最後清空）
+  startClearingCells(clearedCells);
+
+  return true;
+}
+
 
   function getCanvasPosFromClient(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();

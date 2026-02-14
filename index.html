@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>9x9 拼圖消消樂 - 全平台版</title>
+    <title>9x9 拼圖消消樂 - 完美特效版</title>
     <style>
         body {
             background-color: #1a1a1a;
@@ -16,7 +16,6 @@
             height: 100vh;
             justify-content: center;
             overflow: hidden;
-            /* 防止手機拉動頁面 */
             touch-action: none; 
         }
         .header {
@@ -70,6 +69,7 @@
 </div>
 
 <script>
+/** 遊戲核心設定 **/
 const GRID_SIZE = 9;
 const CELL_SIZE = 55;
 const SIDEBAR = 250;
@@ -105,9 +105,11 @@ const SHAPE_DEFS = [
     { shape: [[0,0], [0,1], [0,2], [1,0], [1,1], [1,2], [2,0], [2,1], [2,2]], weight: 3 }
 ];
 
-let currentTheme, grid, hand, score, highScore, draggingIdx, mouseX, mouseY, gameOver;
+let currentTheme, grid, hand, score, highScore, draggingIdx = null;
+let mouseX = 0, mouseY = 0, gameOver = false;
 let particles = [], floatingTexts = [], shakeIntensity = 0, currentComboCount = 0;
 
+/** 繪圖輔助 **/
 function pathRoundedRect(x, y, w, h, r) {
     ctx.beginPath();
     ctx.moveTo(x + r, y);
@@ -131,9 +133,24 @@ function drawBlock(x, y, size, r, theme, alpha = 1.0) {
     g.addColorStop(1, theme.dark);
     ctx.fillStyle = g;
     ctx.fill();
+    // 高光
+    ctx.fillStyle = "rgba(255,255,255,0.2)";
+    ctx.beginPath(); ctx.arc(x + size*0.3, y + size*0.3, size*0.15, 0, Math.PI*2); ctx.fill();
     ctx.restore();
 }
 
+function spawnExplosion(x, y) {
+    for (let i = 0; i < 8; i++) {
+        particles.push({
+            x: x, y: y,
+            vx: (Math.random() - 0.5) * 12,
+            vy: (Math.random() - 0.5) * 12 - 3,
+            life: 1.0, size: Math.random() * 6 + 4
+        });
+    }
+}
+
+/** 遊戲邏輯 **/
 function resetGame() {
     currentTheme = THEMES[Math.floor(Math.random() * THEMES.length)];
     restartBtn.style.backgroundColor = currentTheme.main;
@@ -189,8 +206,9 @@ function checkAndClear() {
         shakeIntensity = lines * 8;
         let praise = ["", "Good！", "Nice Play！", "Great！", "Perfect！", "GOD LIKE！"][Math.min(currentComboCount, 5)];
         floatingTexts.push({txt: praise, x: (GRID_SIZE*CELL_SIZE)/2, y: (GRID_SIZE*CELL_SIZE)/2-30, life:1, size:25+currentComboCount*5});
-        rs.forEach(r => { for(let c=0; c<GRID_SIZE; c++) grid[r][c]=0; });
-        cs.forEach(c => { for(let r=0; r<GRID_SIZE; r++) grid[r][c]=0; });
+        
+        rs.forEach(r => { for(let c=0; c<GRID_SIZE; c++) { spawnExplosion(c*CELL_SIZE+27, r*CELL_SIZE+27); grid[r][c]=0; } });
+        cs.forEach(c => { for(let r=0; r<GRID_SIZE; r++) { spawnExplosion(c*CELL_SIZE+27, r*CELL_SIZE+27); grid[r][c]=0; } });
     } else { currentComboCount = 0; }
 }
 
@@ -199,11 +217,14 @@ function animate() {
     ctx.save();
     if(shakeIntensity > 0) { ctx.translate((Math.random()-0.5)*shakeIntensity, (Math.random()-0.5)*shakeIntensity); shakeIntensity *= 0.8; }
     
+    // 背景格
     ctx.fillStyle = '#333';
     for(let r=0; r<GRID_SIZE; r++) for(let c=0; c<GRID_SIZE; c++) ctx.fillRect(c*CELL_SIZE+2, r*CELL_SIZE+2, CELL_SIZE-4, CELL_SIZE-4);
     
+    // 盤面方塊
     for(let r=0; r<GRID_SIZE; r++) for(let c=0; c<GRID_SIZE; c++) if(grid[r][c]) drawBlock(c*CELL_SIZE+2, r*CELL_SIZE+2, CELL_SIZE-4, 8, currentTheme);
 
+    // 預覽
     if(draggingIdx !== null && hand[draggingIdx]) {
         let r = Math.round((mouseY-25)/CELL_SIZE), c = Math.round((mouseX-25)/CELL_SIZE);
         if(canPlace(hand[draggingIdx], r, c)) {
@@ -211,16 +232,29 @@ function animate() {
         }
     }
 
+    // 手牌
     hand.forEach((s, i) => {
         if(!s || i === draggingIdx) return;
         let bx = GRID_SIZE*CELL_SIZE + 60, by = 60 + i * 150;
         for(let coord of s) drawBlock(bx + coord[1]*22, by + coord[0]*22, 20, 4, currentTheme);
     });
 
+    // 拖曳物
     if(draggingIdx !== null && hand[draggingIdx]) {
         for(let coord of hand[draggingIdx]) drawBlock(mouseX + coord[1]*CELL_SIZE-25, mouseY + coord[0]*CELL_SIZE-25, CELL_SIZE-4, 8, currentTheme);
     }
 
+    // 粒子系統更新與繪製
+    particles.forEach((p, i) => {
+        p.x += p.vx; p.y += p.vy; p.vy += 0.4; p.life -= 0.02;
+        if (p.life <= 0) particles.splice(i, 1);
+        else {
+            ctx.save(); ctx.globalAlpha = p.life; ctx.fillStyle = currentTheme.main;
+            ctx.fillRect(p.x, p.y, p.size, p.size); ctx.restore();
+        }
+    });
+
+    // 文字特效
     floatingTexts.forEach((t, i) => {
         t.y -= 1; t.life -= 0.02;
         ctx.globalAlpha = Math.max(0, t.life); ctx.fillStyle = "#FFD700"; ctx.textAlign = "center";
@@ -231,27 +265,23 @@ function animate() {
     if(gameOver) {
         ctx.fillStyle = "rgba(0,0,0,0.8)"; ctx.fillRect(0,0,canvas.width,canvas.height);
         ctx.fillStyle = "white"; ctx.font = "40px Arial"; ctx.textAlign = "center";
-        ctx.fillText("GAME OVER", canvas.width/2, canvas.height/2);
+        ctx.fillText("GAME OVER", canvas.width / 2, canvas.height / 2);
         restartBtn.style.display = "block";
     }
     ctx.restore();
     requestAnimationFrame(animate);
 }
 
-/** 核心修正：統一輸入事件 **/
-function handleInputStart(x, y) {
+/** 輸入處理 **/
+function handleStart(x, y) {
     if(gameOver) return;
     if(x > GRID_SIZE * CELL_SIZE) {
         let idx = Math.floor((y - 40) / 150);
         if(idx >= 0 && idx < 3 && hand[idx]) draggingIdx = idx;
     }
 }
-
-function handleInputMove(x, y) {
-    mouseX = x; mouseY = y;
-}
-
-function handleInputEnd() {
+function handleMove(x, y) { mouseX = x; mouseY = y; }
+function handleEnd() {
     if(draggingIdx !== null) {
         let r = Math.round((mouseY-25)/CELL_SIZE), c = Math.round((mouseX-25)/CELL_SIZE);
         if(canPlace(hand[draggingIdx], r, c)) {
@@ -267,36 +297,13 @@ function handleInputEnd() {
     }
 }
 
-// 滑鼠事件
-canvas.addEventListener('mousedown', e => {
-    const rect = canvas.getBoundingClientRect();
-    handleInputStart(e.clientX - rect.left, e.clientY - rect.top);
-});
-window.addEventListener('mousemove', e => {
-    const rect = canvas.getBoundingClientRect();
-    handleInputMove(e.clientX - rect.left, e.clientY - rect.top);
-});
-window.addEventListener('mouseup', handleInputEnd);
-
-// 觸控事件
-canvas.addEventListener('touchstart', e => {
-    e.preventDefault();
-    const rect = canvas.getBoundingClientRect();
-    const touch = e.touches[0];
-    handleInputStart(touch.clientX - rect.left, touch.clientY - rect.top);
-}, {passive: false});
-
-canvas.addEventListener('touchmove', e => {
-    e.preventDefault();
-    const rect = canvas.getBoundingClientRect();
-    const touch = e.touches[0];
-    handleInputMove(touch.clientX - rect.left, touch.clientY - rect.top);
-}, {passive: false});
-
-canvas.addEventListener('touchend', e => {
-    e.preventDefault();
-    handleInputEnd();
-}, {passive: false});
+// 註冊滑鼠與觸控
+canvas.addEventListener('mousedown', e => { const r = canvas.getBoundingClientRect(); handleStart(e.clientX - r.left, e.clientY - r.top); });
+window.addEventListener('mousemove', e => { const r = canvas.getBoundingClientRect(); handleMove(e.clientX - r.left, e.clientY - r.top); });
+window.addEventListener('mouseup', handleEnd);
+canvas.addEventListener('touchstart', e => { e.preventDefault(); const r = canvas.getBoundingClientRect(); const t = e.touches[0]; handleStart(t.clientX - r.left, t.clientY - r.top); }, {passive: false});
+canvas.addEventListener('touchmove', e => { e.preventDefault(); const r = canvas.getBoundingClientRect(); const t = e.touches[0]; handleMove(t.clientX - r.left, t.clientY - r.top); }, {passive: false});
+canvas.addEventListener('touchend', handleEnd);
 
 resetGame();
 animate();

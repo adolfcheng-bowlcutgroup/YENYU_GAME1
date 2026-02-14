@@ -353,6 +353,7 @@
     if (!name) return;
 
     const ref = doc(db, LEADERBOARD_COL, deviceUid);
+    console.log("[LB] writing to", LEADERBOARD_COL, deviceUid, { name, score });
     const snap = await getDoc(ref);
     const prev = snap.exists() ? Number(snap.data().score || 0) : 0;
 
@@ -1084,10 +1085,20 @@
   // ✅ GAME OVER：跳排行榜 + 顯示「再玩一局 / 回到首頁」
   async function onGameOver() {
     const name = getPlayerName();
-    if (name) { try { await remoteUpsertBest(name, score); } catch (_) {} }
+    if (name) {
+      try {
+        await remoteUpsertBest(name, score);
+        console.log("[LB] upsert ok:", { name, score, deviceUid });
+      } catch (e) {
+        console.error("[LB] upsert FAILED:", e);
+        // 也順便在榜單頁顯示原因
+        boardStatus.textContent = "⚠️ 上傳分數失敗（請開 Console 看錯誤）";
+      }
+    }
     switchTab("board");
     showOverlay();
   }
+
 
   function handlePointerDown(e) {
     if (gameOver) return;

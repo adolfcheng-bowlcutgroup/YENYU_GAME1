@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>9x9 拼圖消消樂</title>
+  <title>晏羽のミニゲーム！</title>
   <style>
     * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
     body{
@@ -241,7 +241,7 @@
 
   <div class="header">
     <div id="highScoreContainer">
-      <div style="font-size:10px;color:#aaa;">BEST</div>
+      <div style="font-size:10px;color:#aaa;">個人最高分</div>
       <div id="highScore">0</div>
     </div>
 
@@ -262,7 +262,7 @@
   <div id="overlay">
     <div class="panel">
       <div class="panelHead">
-        <div class="title">9x9 拼圖消消樂</div>
+        <div class="title">晏羽の迷你小遊戲！</div>
         <div id="playerMini" class="muted"></div>
       </div>
 
@@ -284,8 +284,8 @@
           </div>
 
           <div class="hint">
-            - 排行榜是「全球榜」：會看到網路上其他玩家分數。<br/>
-            - 左上角 BEST 仍是你自己裝置的最高分（不影響）。
+            - 排行榜是「全球榜」，會看到網路上其他玩家分數。<br/>
+            - 左上角是你自己裝置的最高分。
           </div>
         </div>
 
@@ -623,11 +623,11 @@
   let layout = null;
 
   const COMBO_TEXT = {
-    good: "不錯",
-    nice: "漂亮",
-    great: "超讚",
-    perfect: "完美",
-    godlike: "神操作"
+    good: "晏羽說不錯",
+    nice: "晏羽說漂亮",
+    great: "晏羽說超讚",
+    perfect: "晏羽說完美",
+    godlike: "晏羽說神操作"
   };
 
   function getComboTier(combo) {
@@ -638,7 +638,6 @@
     return             { name: COMBO_TEXT.good,    color:"#FFFFFF", glow:"rgba(255,255,255,0.30)", border:"rgba(255,255,255,0.20)" };
   }
 
-
   // ✅ COMBO UI 常駐，無 combo 顯示 x0
   function updateComboUI() {
     comboBadge.style.display = "inline-flex";
@@ -647,7 +646,6 @@
     const shown = Math.max(0, currentComboCount);
     comboCountEl.innerText = "x" + shown;
 
-    const tier = getComboTier(1);
     if (currentComboCount > 0) {
       const t2 = getComboTier(currentComboCount);
       comboBadge.style.borderColor = t2.border;
@@ -785,7 +783,6 @@
     failOverlayLife = 0;
     bounceLife = 0;
 
-    // clear-anim state
     clearingCells = [];
     clearingMap.clear();
 
@@ -894,13 +891,16 @@
     }
   }
 
-  function pushFloatingBreakdown(x, y, tier, base, multi, comboBonus, gain) {
+  function pushFloatingBreakdown(x, y, tier, base, multi, baseTotal, multiplier, gain) {
     const lines = [];
     lines.push({ txt: tier.name, color: tier.color, sizeMul: 1.25 });
+
     lines.push({ txt: `+${gain} TOTAL`, color: "#FFD700", sizeMul: 1.05 });
-    lines.push({ txt: `+${base} Base`, color: "rgba(255,255,255,0.95)", sizeMul: 0.85 });
-    if (multi > 0) lines.push({ txt: `+${multi} Multi`, color: "rgba(124,252,255,0.95)", sizeMul: 0.85 });
-    lines.push({ txt: `+${comboBonus} Combo`, color: "rgba(183,255,106,0.95)", sizeMul: 0.85 });
+
+    lines.push({ txt: `BaseTotal ${baseTotal}`, color: "rgba(255,255,255,0.95)", sizeMul: 0.85 });
+    lines.push({ txt: `= (Base ${base} + Multi ${multi})`, color: "rgba(255,255,255,0.70)", sizeMul: 0.75 });
+
+    lines.push({ txt: `x${multiplier} Combo Multiplier`, color: "rgba(183,255,106,0.95)", sizeMul: 0.85 });
 
     floatingTexts.push({
       lines,
@@ -936,24 +936,29 @@
   }
 
   function calcGain(lines, comboCount) {
-    const base = lines * GRID_SIZE;
+    const base = lines * 10;
     const multiLineBonus = Math.max(0, lines - 1) * 16;
-    const comboBonus = 25 + (comboCount - 1) * 20;
-    const gain = base + multiLineBonus + comboBonus;
-    return { base, multiLineBonus, comboBonus, gain };
+    const baseTotal = base + multiLineBonus;
+
+    const multiplier = Math.max(1, comboCount);
+    const gain = baseTotal * multiplier;
+
+    return { base, multiLineBonus, baseTotal, multiplier, gain };
   }
 
   function startClearingCells(clearedCells) {
     for (const { r, c } of clearedCells) {
-      if (grid[r][c] === 1) {
-        grid[r][c] = 2; // clearing
-        const key = `${r},${c}`;
+      const key = `${r},${c}`;
+
+      // ✅ 只要不是空格，就允許進 clearing（1 或 2 都可以）
+      if (grid[r][c] !== 0) {
+        grid[r][c] = 2;
+
         if (!clearingMap.has(key)) {
           const obj = { r, c, life: 1 };
           clearingCells.push(obj);
           clearingMap.set(key, obj);
         } else {
-          // 若重複觸發，刷新生命
           clearingMap.get(key).life = 1;
         }
       }
@@ -963,7 +968,7 @@
   function updateClearingCells() {
     for (let i = clearingCells.length - 1; i >= 0; i--) {
       const cc = clearingCells[i];
-      cc.life -= 0.08; // 淡出速度
+      cc.life -= 0.08;
       if (cc.life <= 0) {
         if (grid[cc.r][cc.c] === 2) grid[cc.r][cc.c] = 0;
         clearingMap.delete(`${cc.r},${cc.c}`);
@@ -975,22 +980,32 @@
   function checkAndClear() {
     const rs = [], cs = [];
 
-    // ✅ 1 或 2 都視為滿格（clearing 還沒真正變空前）
-    for (let r = 0; r < GRID_SIZE; r++) if (grid[r].every(v => v !== 0)) rs.push(r);
+    // ✅ 1 或 2 都視為滿格
+    for (let r = 0; r < GRID_SIZE; r++) {
+      if (grid[r].every(v => v !== 0)) rs.push(r);
+    }
 
     for (let c = 0; c < GRID_SIZE; c++) {
       let full = true;
-      for (let r = 0; r < GRID_SIZE; r++) if (grid[r][c] === 0) full = false;
+      for (let r = 0; r < GRID_SIZE; r++) {
+        if (grid[r][c] === 0) { full = false; break; }
+      }
       if (full) cs.push(c);
     }
 
     const lines = rs.length + cs.length;
     if (lines <= 0) return false;
 
+    // ✅ 消除畫面抖動（screen shake）
+    shakeIntensity = Math.max(shakeIntensity, lines * 8);
+    console.log("[CLEAR] lines=", lines, "shake=", shakeIntensity);
+
+    // ✅ combo 計數
     currentComboCount++;
     updateComboUI();
 
-    const { base, multiLineBonus, comboBonus, gain } = calcGain(lines, currentComboCount);
+    // ✅ 乘數計分
+    const { base, multiLineBonus, baseTotal, multiplier, gain } = calcGain(lines, currentComboCount);
     score += gain;
     document.getElementById('scoreDisplay').innerText = String(score);
 
@@ -1000,27 +1015,30 @@
       document.getElementById('highScore').innerText = String(score);
     }
 
+    // ✅ 浮字
+    const tier = getComboTier(currentComboCount);
+    pushFloatingBreakdown(
+      layout.gridX + (GRID_SIZE * CELL_SIZE) / 2,
+      layout.gridY + (GRID_SIZE * CELL_SIZE) / 2 - 60,
+      tier, base, multiLineBonus, baseTotal, multiplier, gain
+    );
+
+    // ✅ 計算要清掉的格子（rows + cols 合併去重）
     const clearedSet = new Set();
     for (const r of rs) for (let c = 0; c < GRID_SIZE; c++) clearedSet.add(`${r},${c}`);
     for (const c of cs) for (let r = 0; r < GRID_SIZE; r++) clearedSet.add(`${r},${c}`);
+
     const clearedCells = Array.from(clearedSet).map(s => {
       const [r, c] = s.split(',').map(Number);
       return { r, c };
     });
 
-    // ✅ 特效：閃線 + 粒子 + 震動 + 浮字
+    // ✅ 閃光 + 粒子
     spawnLineFlash(rs, cs);
+    console.log("[CLEAR] cells=", clearedCells.length);
     spawnClearParticles(clearedCells);
-    shakeIntensity = Math.max(shakeIntensity, lines * 8);
 
-    const tier = getComboTier(currentComboCount);
-    pushFloatingBreakdown(
-      layout.gridX + (GRID_SIZE * CELL_SIZE) / 2,
-      layout.gridY + (GRID_SIZE * CELL_SIZE) / 2 - 60,
-      tier, base, multiLineBonus, comboBonus, gain
-    );
-
-    // ✅ 不要立刻清 0，先進入 clearing 狀態做淡出
+    // ✅ 淡出清除
     startClearingCells(clearedCells);
 
     return true;
@@ -1135,20 +1153,38 @@
     bounceToY = home.y;
   }
 
-  // GAME OVER：跳排行榜 + 顯示「再玩一局 / 回到首頁」
-  async function onGameOver() {
-    const name = getPlayerName();
-    if (name) {
-      try {
-        await remoteUpsertBest(name, score);
-        console.log("[LB] upsert ok:", { name, score, deviceUid });
-      } catch (e) {
-        console.error("[LB] upsert FAILED:", e);
-        boardStatus.textContent = "⚠️ 上傳分數失敗（請開 Console 看錯誤）";
-      }
-    }
+  // ✅ 防當機：Promise timeout helper（避免 Firestore 卡死）
+  function withTimeout(promise, ms, label = "timeout") {
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error(label + " " + ms + "ms")), ms))
+    ]);
+  }
+
+  // ✅ GAME OVER：先顯示排行榜（不等待上傳），再背景上傳分數
+  function onGameOver() {
     switchTab("board");
     showOverlay();
+    boardStatus.textContent = "正在結算/上傳分數中...";
+
+    const name = getPlayerName();
+    if (!name) {
+      boardStatus.textContent = "未登入名字，無法上傳分數。";
+      return;
+    }
+
+    (async () => {
+      try {
+        await withTimeout(remoteUpsertBest(name, score), 3500, "Firestore write timeout");
+        console.log("[LB] upsert ok:", { name, score, deviceUid });
+        boardStatus.textContent = "分數已上傳，排行榜更新中...";
+        await refreshBoardUI();
+      } catch (e) {
+        console.error("[LB] upsert FAILED:", e);
+        boardStatus.textContent = "⚠️ 分數上傳失敗（網路/Firestore timeout）。你仍可查看排行榜。";
+        try { await refreshBoardUI(); } catch (_) {}
+      }
+    })();
   }
 
   function handlePointerDown(e) {
@@ -1411,7 +1447,7 @@
       updateAndDrawFloatingTexts();
     }
 
-    // 失敗紅色 overlay（透明度可調）
+    // 失敗紅色 overlay
     if (failOverlayLife > 0) {
       ctx.save();
       ctx.globalAlpha = 0.30 * failOverlayLife;

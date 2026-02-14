@@ -623,11 +623,11 @@
   let layout = null;
 
   const COMBO_TEXT = {
-    good: "不錯",
-    nice: "漂亮",
-    great: "超讚",
-    perfect: "完美",
-    godlike: "神操作"
+    good: "晏羽說不錯",
+    nice: "晏羽說漂亮",
+    great: "晏羽說超讚",
+    perfect: "晏羽說完美",
+    godlike: "晏羽說神操作"
   };
 
   function getComboTier(combo) {
@@ -893,13 +893,19 @@
     }
   }
 
-  function pushFloatingBreakdown(x, y, tier, base, multi, comboBonus, gain) {
+  function pushFloatingBreakdown(x, y, tier, base, multi, baseTotal, multiplier, gain) {
     const lines = [];
     lines.push({ txt: tier.name, color: tier.color, sizeMul: 1.25 });
+
+    // 顯示：乘後總分
     lines.push({ txt: `+${gain} TOTAL`, color: "#FFD700", sizeMul: 1.05 });
-    lines.push({ txt: `+${base} Base`, color: "rgba(255,255,255,0.95)", sizeMul: 0.85 });
-    if (multi > 0) lines.push({ txt: `+${multi} Multi`, color: "rgba(124,252,255,0.95)", sizeMul: 0.85 });
-    lines.push({ txt: `+${comboBonus} Combo`, color: "rgba(183,255,106,0.95)", sizeMul: 0.85 });
+
+    // 顯示：消除本體分數
+    lines.push({ txt: `BaseTotal ${baseTotal}`, color: "rgba(255,255,255,0.95)", sizeMul: 0.85 });
+    lines.push({ txt: `= (Base ${base} + Multi ${multi})`, color: "rgba(255,255,255,0.70)", sizeMul: 0.75 });
+
+    // 顯示：乘數
+    lines.push({ txt: `x${multiplier} Combo Multiplier`, color: "rgba(183,255,106,0.95)", sizeMul: 0.85 });
 
     floatingTexts.push({
       lines,
@@ -911,6 +917,7 @@
       stroke: "rgba(0,0,0,0.65)"
     });
   }
+
 
   function updateAndDrawFloatingTexts() {
     for (let i = floatingTexts.length - 1; i >= 0; i--) {
@@ -935,12 +942,18 @@
   }
 
   function calcGain(lines, comboCount) {
-    const base = lines * GRID_SIZE;
-    const multiLineBonus = Math.max(0, lines - 1) * 16;
-    const comboBonus = 25 + (comboCount - 1) * 20;
-    const gain = base + multiLineBonus + comboBonus;
-    return { base, multiLineBonus, comboBonus, gain };
+    // 1) 先算「消除本身」的總分（你可以在這裡自由調整）
+    const base = lines * 10;                 // 例如：每消一條線 = 10 分
+    const multiLineBonus = Math.max(0, lines - 1) * 16; // 例如：同時多線額外加成（保留你原本的規則）
+    const baseTotal = base + multiLineBonus;
+
+    // 2) Combo 改為乘數
+    const multiplier = Math.max(1, comboCount);
+    const gain = baseTotal * multiplier;
+
+    return { base, multiLineBonus, baseTotal, multiplier, gain };
   }
+
 
   function startClearingCells(clearedCells) {
     for (const { r, c } of clearedCells) {
@@ -989,7 +1002,7 @@
     currentComboCount++;
     updateComboUI();
 
-    const { base, multiLineBonus, comboBonus, gain } = calcGain(lines, currentComboCount);
+    const { base, multiLineBonus, baseTotal, multiplier, gain } = calcGain(lines, currentComboCount);
     score += gain;
     document.getElementById('scoreDisplay').innerText = String(score);
 
@@ -999,25 +1012,13 @@
       document.getElementById('highScore').innerText = String(score);
     }
 
-    const clearedSet = new Set();
-    for (const r of rs) for (let c = 0; c < GRID_SIZE; c++) clearedSet.add(`${r},${c}`);
-    for (const c of cs) for (let r = 0; r < GRID_SIZE; r++) clearedSet.add(`${r},${c}`);
-    const clearedCells = Array.from(clearedSet).map(s => {
-      const [r, c] = s.split(',').map(Number);
-      return { r, c };
-    });
-
-    // ✅ 特效：閃線 + 粒子 + 震動 + 浮字
-    spawnLineFlash(rs, cs);
-    spawnClearParticles(clearedCells);
-    shakeIntensity = Math.max(shakeIntensity, lines * 8);
-
     const tier = getComboTier(currentComboCount);
     pushFloatingBreakdown(
       layout.gridX + (GRID_SIZE * CELL_SIZE) / 2,
       layout.gridY + (GRID_SIZE * CELL_SIZE) / 2 - 60,
-      tier, base, multiLineBonus, comboBonus, gain
+      tier, base, multiLineBonus, baseTotal, multiplier, gain
     );
+
 
     // ✅ 不要立刻清 0，先進入 clearing 狀態做淡出
     startClearingCells(clearedCells);

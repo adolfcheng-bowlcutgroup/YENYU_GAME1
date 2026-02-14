@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>晏羽のミニゲーム！</title>
+  <title>9x9 拼圖消消樂</title>
   <style>
     * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
     body{
@@ -241,7 +241,7 @@
 
   <div class="header">
     <div id="highScoreContainer">
-      <div style="font-size:10px;color:#aaa;">個人最高分</div>
+      <div style="font-size:10px;color:#aaa;">BEST</div>
       <div id="highScore">0</div>
     </div>
 
@@ -262,7 +262,7 @@
   <div id="overlay">
     <div class="panel">
       <div class="panelHead">
-        <div class="title">晏羽の迷你小遊戲！</div>
+        <div class="title">9x9 拼圖消消樂</div>
         <div id="playerMini" class="muted"></div>
       </div>
 
@@ -284,8 +284,8 @@
           </div>
 
           <div class="hint">
-            - 排行榜是「全球榜」，會看到網路上其他玩家分數。<br/>
-            - 左上角是你自己裝置的最高分。
+            - 排行榜是「全球榜」：會看到網路上其他玩家分數。<br/>
+            - 左上角 BEST 仍是你自己裝置的最高分（不影響）。
           </div>
         </div>
 
@@ -623,11 +623,11 @@
   let layout = null;
 
   const COMBO_TEXT = {
-    good: "晏羽說不錯",
-    nice: "晏羽說漂亮",
-    great: "晏羽說超讚",
-    perfect: "晏羽說完美",
-    godlike: "晏羽說神操作"
+    good: "不錯",
+    nice: "漂亮",
+    great: "超讚",
+    perfect: "完美",
+    godlike: "神操作"
   };
 
   function getComboTier(combo) {
@@ -637,6 +637,7 @@
     if (combo >= 2) return { name: COMBO_TEXT.nice,    color:"#B7FF6A", glow:"rgba(183,255,106,0.45)", border:"rgba(183,255,106,0.35)" };
     return             { name: COMBO_TEXT.good,    color:"#FFFFFF", glow:"rgba(255,255,255,0.30)", border:"rgba(255,255,255,0.20)" };
   }
+
 
   // ✅ COMBO UI 常駐，無 combo 顯示 x0
   function updateComboUI() {
@@ -893,19 +894,13 @@
     }
   }
 
-  function pushFloatingBreakdown(x, y, tier, base, multi, baseTotal, multiplier, gain) {
+  function pushFloatingBreakdown(x, y, tier, base, multi, comboBonus, gain) {
     const lines = [];
     lines.push({ txt: tier.name, color: tier.color, sizeMul: 1.25 });
-
-    // 顯示：乘後總分
     lines.push({ txt: `+${gain} TOTAL`, color: "#FFD700", sizeMul: 1.05 });
-
-    // 顯示：消除本體分數
-    lines.push({ txt: `BaseTotal ${baseTotal}`, color: "rgba(255,255,255,0.95)", sizeMul: 0.85 });
-    lines.push({ txt: `= (Base ${base} + Multi ${multi})`, color: "rgba(255,255,255,0.70)", sizeMul: 0.75 });
-
-    // 顯示：乘數
-    lines.push({ txt: `x${multiplier} Combo Multiplier`, color: "rgba(183,255,106,0.95)", sizeMul: 0.85 });
+    lines.push({ txt: `+${base} Base`, color: "rgba(255,255,255,0.95)", sizeMul: 0.85 });
+    if (multi > 0) lines.push({ txt: `+${multi} Multi`, color: "rgba(124,252,255,0.95)", sizeMul: 0.85 });
+    lines.push({ txt: `+${comboBonus} Combo`, color: "rgba(183,255,106,0.95)", sizeMul: 0.85 });
 
     floatingTexts.push({
       lines,
@@ -917,7 +912,6 @@
       stroke: "rgba(0,0,0,0.65)"
     });
   }
-
 
   function updateAndDrawFloatingTexts() {
     for (let i = floatingTexts.length - 1; i >= 0; i--) {
@@ -942,39 +936,29 @@
   }
 
   function calcGain(lines, comboCount) {
-    // 1) 先算「消除本身」的總分（你可以在這裡自由調整）
-    const base = lines * 10;                 // 例如：每消一條線 = 10 分
-    const multiLineBonus = Math.max(0, lines - 1) * 16; // 例如：同時多線額外加成（保留你原本的規則）
-    const baseTotal = base + multiLineBonus;
-
-    // 2) Combo 改為乘數
-    const multiplier = Math.max(1, comboCount);
-    const gain = baseTotal * multiplier;
-
-    return { base, multiLineBonus, baseTotal, multiplier, gain };
+    const base = lines * GRID_SIZE;
+    const multiLineBonus = Math.max(0, lines - 1) * 16;
+    const comboBonus = 25 + (comboCount - 1) * 20;
+    const gain = base + multiLineBonus + comboBonus;
+    return { base, multiLineBonus, comboBonus, gain };
   }
-
 
   function startClearingCells(clearedCells) {
     for (const { r, c } of clearedCells) {
-      const key = `${r},${c}`;
-
-      // ✅ 只要不是空格，就允許進 clearing（1 或 2 都可以）
-      if (grid[r][c] !== 0) {
-        grid[r][c] = 2;
-
+      if (grid[r][c] === 1) {
+        grid[r][c] = 2; // clearing
+        const key = `${r},${c}`;
         if (!clearingMap.has(key)) {
           const obj = { r, c, life: 1 };
           clearingCells.push(obj);
           clearingMap.set(key, obj);
         } else {
-          // ✅ 若重複觸發，刷新生命
+          // 若重複觸發，刷新生命
           clearingMap.get(key).life = 1;
         }
       }
     }
   }
-
 
   function updateClearingCells() {
     for (let i = clearingCells.length - 1; i >= 0; i--) {
@@ -988,74 +972,59 @@
     }
   }
 
-function checkAndClear() {
-  const rs = [], cs = [];
+  function checkAndClear() {
+    const rs = [], cs = [];
 
-  // ✅ 1 或 2 都視為滿格（避免 clearing 狀態先把格子變 0 導致判定失效）
-  for (let r = 0; r < GRID_SIZE; r++) {
-    if (grid[r].every(v => v !== 0)) rs.push(r);
-  }
+    // ✅ 1 或 2 都視為滿格（clearing 還沒真正變空前）
+    for (let r = 0; r < GRID_SIZE; r++) if (grid[r].every(v => v !== 0)) rs.push(r);
 
-  for (let c = 0; c < GRID_SIZE; c++) {
-    let full = true;
-    for (let r = 0; r < GRID_SIZE; r++) {
-      if (grid[r][c] === 0) { full = false; break; }
+    for (let c = 0; c < GRID_SIZE; c++) {
+      let full = true;
+      for (let r = 0; r < GRID_SIZE; r++) if (grid[r][c] === 0) full = false;
+      if (full) cs.push(c);
     }
-    if (full) cs.push(c);
+
+    const lines = rs.length + cs.length;
+    if (lines <= 0) return false;
+
+    currentComboCount++;
+    updateComboUI();
+
+    const { base, multiLineBonus, comboBonus, gain } = calcGain(lines, currentComboCount);
+    score += gain;
+    document.getElementById('scoreDisplay').innerText = String(score);
+
+    if (score > highScore) {
+      highScore = score;
+      localStorage.setItem('blockHighScore', String(score));
+      document.getElementById('highScore').innerText = String(score);
+    }
+
+    const clearedSet = new Set();
+    for (const r of rs) for (let c = 0; c < GRID_SIZE; c++) clearedSet.add(`${r},${c}`);
+    for (const c of cs) for (let r = 0; r < GRID_SIZE; r++) clearedSet.add(`${r},${c}`);
+    const clearedCells = Array.from(clearedSet).map(s => {
+      const [r, c] = s.split(',').map(Number);
+      return { r, c };
+    });
+
+    // ✅ 特效：閃線 + 粒子 + 震動 + 浮字
+    spawnLineFlash(rs, cs);
+    spawnClearParticles(clearedCells);
+    shakeIntensity = Math.max(shakeIntensity, lines * 8);
+
+    const tier = getComboTier(currentComboCount);
+    pushFloatingBreakdown(
+      layout.gridX + (GRID_SIZE * CELL_SIZE) / 2,
+      layout.gridY + (GRID_SIZE * CELL_SIZE) / 2 - 60,
+      tier, base, multiLineBonus, comboBonus, gain
+    );
+
+    // ✅ 不要立刻清 0，先進入 clearing 狀態做淡出
+    startClearingCells(clearedCells);
+
+    return true;
   }
-
-  const lines = rs.length + cs.length;
-  if (lines <= 0) return false;
-
-  // ✅ 消除畫面抖動（screen shake）
-  shakeIntensity = Math.max(shakeIntensity, lines * 8);
-  console.log("[CLEAR] lines=", lines, "shake=", shakeIntensity);
-
-  // ✅ combo 計數
-  currentComboCount++;
-  updateComboUI();
-
-  // ✅ 乘數計分
-  const { base, multiLineBonus, baseTotal, multiplier, gain } = calcGain(lines, currentComboCount);
-  score += gain;
-  document.getElementById('scoreDisplay').innerText = String(score);
-
-  if (score > highScore) {
-    highScore = score;
-    localStorage.setItem('blockHighScore', String(score));
-    document.getElementById('highScore').innerText = String(score);
-  }
-
-  // ✅ 浮字
-  const tier = getComboTier(currentComboCount);
-  pushFloatingBreakdown(
-    layout.gridX + (GRID_SIZE * CELL_SIZE) / 2,
-    layout.gridY + (GRID_SIZE * CELL_SIZE) / 2 - 60,
-    tier, base, multiLineBonus, baseTotal, multiplier, gain
-  );
-
-  // ✅ 計算要清掉的格子（rows + cols 合併去重）
-  const clearedSet = new Set();
-  for (const r of rs) for (let c = 0; c < GRID_SIZE; c++) clearedSet.add(`${r},${c}`);
-  for (const c of cs) for (let r = 0; r < GRID_SIZE; r++) clearedSet.add(`${r},${c}`);
-
-  const clearedCells = Array.from(clearedSet).map(s => {
-    const [r, c] = s.split(',').map(Number);
-    return { r, c };
-  });
-
-  // ✅ 加回：閃光 + 粒子
-  spawnLineFlash(rs, cs);
-  console.log("[CLEAR] cells=", clearedCells.length);
-  spawnClearParticles(clearedCells);
-
-  // ✅ 進入淡出清除（你自己的 clearing 系統）
-  // 你必須確保 startClearingCells 會把 grid[r][c] 從 1/2 -> 0（或最後清空）
-  startClearingCells(clearedCells);
-
-  return true;
-}
-
 
   function getCanvasPosFromClient(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();

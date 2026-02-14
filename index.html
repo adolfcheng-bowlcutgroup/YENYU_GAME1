@@ -6,62 +6,64 @@
   <title>9x9 拼圖消消樂</title>
   <style>
     * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
-    body {
-      background-color: #1a1a1a;
-      color: white;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
+    body{
+      background:#1a1a1a; color:#fff; margin:0;
+      height:100vh; height:100dvh;
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
       font-family: Arial, sans-serif;
-      margin: 0;
-      height: 100vh;
-      height: 100dvh;
-      justify-content: center;
-      overflow: hidden;
+      overflow:hidden;
     }
-    .header {
-      width: 100%;
-      max-width: 600px;
-      display: flex;
-      justify-content: center;
-      align-items: flex-end;
-      position: relative;
-      margin-bottom: 10px;
-      padding: 0 10px;
+    .header{
+      width:100%; max-width:700px;
+      display:flex; justify-content:center; align-items:flex-end;
+      position:relative; margin-bottom:10px; padding:0 10px;
     }
-    #highScoreContainer {
-      position: absolute; left: 10px; bottom: 5px;
-      background: rgba(255, 255, 255, 0.1);
-      padding: 5px 10px; border-radius: 5px; border-left: 4px solid #FFD700;
+    #highScoreContainer{
+      position:absolute; left:10px; bottom:5px;
+      background:rgba(255,255,255,0.1);
+      padding:5px 10px; border-radius:5px; border-left:4px solid #FFD700;
     }
-    #scoreDisplay {
-      font-size: clamp(40px, 10vw, 70px);
-      font-weight: bold;
-      font-family: 'Arial Black', sans-serif;
+    #scoreDisplay{
+      font-size:clamp(40px, 10vw, 70px);
+      font-weight:900;
+      font-family:'Arial Black', sans-serif;
     }
-    #gameWrapper {
-      position: relative;
-      width: 95vw;
-      max-width: 800px;
-      display: flex;
-      justify-content: center;
+    #comboBadge{
+      position:absolute; right:10px; bottom:5px;
+      z-index: 50;              /* ✅ 重要：避免被分數蓋住 */
+      color: white;
+      background:rgba(255,255,255,0.10);
+      padding:6px 10px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,0.18);
+      display:none;
+      font-weight:900;
+      letter-spacing:.5px;
+      user-select:none; -webkit-user-select:none;
+      pointer-events: none;
     }
-    canvas {
-      background-color: #222;
-      border-radius: 12px;
-      box-shadow: 0 10px 40px rgba(0,0,0,0.5);
-      width: 100%;
-      height: auto;
-      display: block;
-      touch-action: none;
+    #comboBadge .label{ font-size:10px; color:#aaa; margin-right:6px; font-weight:700; }
+    #comboBadge .value{ font-size:14px; }
+
+    #gameWrapper{
+      position:relative;
+      width:95vw; max-width:820px;
+      display:flex; justify-content:center;
     }
-    #restartBtn {
-      display: none;
-      position: absolute; top: 50%; left: 50%;
-      transform: translate(-50%, -50%);
-      padding: 15px 40px; font-size: 20px; font-weight: bold;
-      color: white; border: none; border-radius: 30px;
-      cursor: pointer; z-index: 100;
+    canvas{
+      background:#222;
+      border-radius:12px;
+      box-shadow:0 10px 40px rgba(0,0,0,0.5);
+      width:100%; height:auto; display:block;
+      touch-action:none;
+    }
+    #restartBtn{
+      display:none;
+      position:absolute; top:50%; left:50%;
+      transform:translate(-50%, -50%);
+      padding:15px 40px; font-size:20px; font-weight:900;
+      color:#fff; border:none; border-radius:30px;
+      cursor:pointer; z-index:100;
     }
   </style>
 </head>
@@ -72,7 +74,13 @@
       <div style="font-size:10px;color:#aaa;">BEST</div>
       <div id="highScore">0</div>
     </div>
+
     <div id="scoreDisplay">0</div>
+
+    <div id="comboBadge">
+      <span class="label">COMBO</span>
+      <span class="value" id="comboCount">x1</span>
+    </div>
   </div>
 
   <div id="gameWrapper">
@@ -87,35 +95,43 @@
 const GRID_SIZE = 9;
 const CELL_SIZE = 55;
 
-const SIDEBAR_W = 250;   // 桌機右側手牌寬
-const BOTTOMBAR_H = 220; // 手機底部手牌高
+const SIDEBAR_W = 250;
+const BOTTOMBAR_H = 220;
 
-// 磁吸（更聰明：附近搜尋）
-const MAGNET_SEARCH_RADIUS = 2;   // 2 => 搜 5x5
-const MAGNET_DISTANCE = 0.55;     // 手指靠近格子中心多少比例會吸
+// 手指移動較短、方塊移動較遠
+const DRAG_GAIN = 1.6;
+
+// 磁吸：找附近最近且可放置
+const MAGNET_SEARCH_RADIUS = 2;
+
+// 預覽透明度
 const PREVIEW_ALPHA_OK = 0.28;
 const PREVIEW_ALPHA_BAD = 0.14;
 
-// 拖曳顯示（避免遮擋）
-let dragOffsetX = CELL_SIZE * 0.45;
-let dragOffsetY = CELL_SIZE * 0.45;
+// 拖曳抬起（減少手指遮擋）
 const DRAG_LIFT = CELL_SIZE * 0.9;
 
-// 失敗回饋（震動＋紅色提示＋回彈）
+// 放置失敗回饋
 const FAIL_SHAKE = 14;
 const FAIL_VIBRATION_PATTERN = [25, 30, 25];
-let failOverlayLife = 0;     // 紅色提示
-let bounceLife = 0;          // 回彈動畫
+
+// 回彈與紅提示
+let failOverlayLife = 0;
+let bounceLife = 0;
 let bounceFromX = 0, bounceFromY = 0;
 let bounceToX = 0, bounceToY = 0;
 let bounceShape = null;
 let bounceTheme = null;
 
-// 特效（清除閃光/粒子）
+// 消除特效
 let particles = [];
 let lineFlashes = [];
 
-// 判斷手機布局
+// Drag gain 狀態（anchor）
+let dragStartPX = 0, dragStartPY = 0;
+let dragStartAX = 0, dragStartAY = 0;
+let dragNowAX = 0, dragNowAY = 0;
+
 function isMobileLayout() {
   return window.matchMedia("(max-width: 600px)").matches;
 }
@@ -124,29 +140,32 @@ const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d', { alpha: false });
 const restartBtn = document.getElementById('restartBtn');
 
+const comboBadge = document.getElementById('comboBadge');
+const comboCountEl = document.getElementById('comboCount');
+
 const THEMES = [
-  { main: '#4A90E2', dark: '#21508A', light: '#A4C8F5' },
-  { main: '#50E3C2', dark: '#2A8F79', light: '#B2F2E5' },
-  { main: '#F5A623', dark: '#A36B0D', light: '#FCD9A1' }
+  { main:'#4A90E2', dark:'#21508A', light:'#A4C8F5' },
+  { main:'#50E3C2', dark:'#2A8F79', light:'#B2F2E5' },
+  { main:'#F5A623', dark:'#A36B0D', light:'#FCD9A1' }
 ];
 
 const SHAPE_DEFS = [
-  { shape: [[0,0], [0,1]], weight: 10 },
-  { shape: [[0,0], [1,0]], weight: 10 },
-  { shape: [[0,0], [0,1], [1,0], [1,1]], weight: 10 },
-  { shape: [[0,0], [0,1], [0,2]], weight: 10 },
-  { shape: [[0,0], [1,0], [2,0]], weight: 10 },
-  { shape: [[0,0], [1,0], [1,1]], weight: 10 },
+  { shape: [[0,0],[0,1]], weight: 10 },
+  { shape: [[0,0],[1,0]], weight: 10 },
+  { shape: [[0,0],[0,1],[1,0],[1,1]], weight: 10 },
+  { shape: [[0,0],[0,1],[0,2]], weight: 10 },
+  { shape: [[0,0],[1,0],[2,0]], weight: 10 },
+  { shape: [[0,0],[1,0],[1,1]], weight: 10 },
   { shape: [[0,0]], weight: 10 },
-  { shape: [[0,0], [0,1], [0,2], [0,3]], weight: 10 },
-  { shape: [[0,0], [1,0], [2,0], [3,0]], weight: 10 },
-  { shape: [[0,0], [1,0], [1,1], [2,1]], weight: 10 },
-  { shape: [[0,1], [0,2], [1,0], [1,1]], weight: 10 },
-  { shape: [[0,1], [1,0], [1,1], [1,2]], weight: 10 },
-  { shape: [[0,0], [1,0], [2,0], [2,1]], weight: 10 },
-  { shape: [[0,0], [0,1], [0,2], [1,0], [2,0]], weight: 3 },
-  { shape: [[0,1], [1,0], [1,1], [1,2], [2,1]], weight: 3 },
-  { shape: [[0,0], [0,1], [0,2], [1,0], [1,1], [1,2], [2,0], [2,1], [2,2]], weight: 3 }
+  { shape: [[0,0],[0,1],[0,2],[0,3]], weight: 10 },
+  { shape: [[0,0],[1,0],[2,0],[3,0]], weight: 10 },
+  { shape: [[0,0],[1,0],[1,1],[2,1]], weight: 10 },
+  { shape: [[0,1],[0,2],[1,0],[1,1]], weight: 10 },
+  { shape: [[0,1],[1,0],[1,1],[1,2]], weight: 10 },
+  { shape: [[0,0],[1,0],[2,0],[2,1]], weight: 10 },
+  { shape: [[0,0],[0,1],[0,2],[1,0],[2,0]], weight: 3 },
+  { shape: [[0,1],[1,0],[1,1],[1,2],[2,1]], weight: 3 },
+  { shape: [[0,0],[0,1],[0,2],[1,0],[1,1],[1,2],[2,0],[2,1],[2,2]], weight: 3 }
 ];
 
 /** =========================
@@ -154,15 +173,58 @@ const SHAPE_DEFS = [
  *  ========================= */
 let currentTheme;
 let grid, hand, score, highScore;
+
 let draggingIdx = null;
 let pointerX = 0, pointerY = 0;
 let gameOver = false;
 
-let floatingTexts = [];
 let shakeIntensity = 0;
 let currentComboCount = 0;
 
-let layout = null; // { mode, rawW, rawH, gridX, gridY, hand:{slots...}, handBlock, handGap }
+// 浮字：支援多行/顏色/描邊
+// item: { lines:[{txt,color,sizeMul}], x,y, life, vy, size, stroke, align }
+let floatingTexts = [];
+
+let layout = null;
+
+/** =========================
+ *  Combo UI + Tier
+ *  ========================= */
+function getComboTier(combo) {
+  if (combo >= 6) return { name:"GODLIKE", color:"#FFEA00", glow:"rgba(255,234,0,0.75)", border:"rgba(255,234,0,0.55)" };
+  if (combo >= 4) return { name:"PERFECT", color:"#FFD700", glow:"rgba(255,215,0,0.65)", border:"rgba(255,215,0,0.45)" };
+  if (combo >= 3) return { name:"GREAT",   color:"#7CFCFF", glow:"rgba(124,252,255,0.55)", border:"rgba(124,252,255,0.40)" };
+  if (combo >= 2) return { name:"NICE",    color:"#B7FF6A", glow:"rgba(183,255,106,0.45)", border:"rgba(183,255,106,0.35)" };
+  return             { name:"GOOD",    color:"#FFFFFF", glow:"rgba(255,255,255,0.30)", border:"rgba(255,255,255,0.20)" };
+}
+
+const DEBUG_SHOW_COMBO_WHEN_ZERO = true; // ✅ 你確認 OK 後改 false
+
+function updateComboUI() {
+  if (currentComboCount > 0) {
+    comboBadge.style.display = "inline-flex"; // ✅ 強制顯示
+    comboBadge.style.alignItems = "center";
+    comboCountEl.innerText = "x" + currentComboCount;
+
+    const tier = getComboTier(currentComboCount);
+    comboBadge.style.borderColor = tier.border;
+    comboBadge.style.boxShadow = `0 0 18px ${tier.glow}`;
+    comboBadge.style.opacity = "1";
+  } else {
+    if (DEBUG_SHOW_COMBO_WHEN_ZERO) {
+      // ✅ 開發用：即使 0 也顯示，確認 UI 沒被吃掉
+      comboBadge.style.display = "inline-flex";
+      comboBadge.style.alignItems = "center";
+      comboCountEl.innerText = "x0";
+      comboBadge.style.borderColor = "rgba(255,255,255,0.18)";
+      comboBadge.style.boxShadow = "none";
+      comboBadge.style.opacity = "0.35";
+    } else {
+      comboBadge.style.display = "none";
+    }
+  }
+}
+
 
 /** =========================
  *  Layout
@@ -264,6 +326,19 @@ function drawBlock(x, y, size, r, theme, alpha = 1.0) {
   ctx.restore();
 }
 
+function drawTextWithStroke(txt, x, y, size, color, stroke = "rgba(0,0,0,0.55)", align = "center") {
+  ctx.save();
+  ctx.font = `900 ${size}px Arial`;
+  ctx.textAlign = align;
+  ctx.textBaseline = "middle";
+  ctx.lineWidth = Math.max(3, size * 0.12);
+  ctx.strokeStyle = stroke;
+  ctx.fillStyle = color;
+  ctx.strokeText(txt, x, y);
+  ctx.fillText(txt, x, y);
+  ctx.restore();
+}
+
 /** =========================
  *  遊戲流程
  *  ========================= */
@@ -278,9 +353,9 @@ function resetGame() {
   highScore = Number(localStorage.getItem('blockHighScore') || 0);
 
   gameOver = false;
-  floatingTexts = [];
-  currentComboCount = 0;
   shakeIntensity = 0;
+  currentComboCount = 0;
+  floatingTexts = [];
   particles = [];
   lineFlashes = [];
   failOverlayLife = 0;
@@ -290,6 +365,7 @@ function resetGame() {
   document.getElementById('highScore').innerText = String(highScore);
   restartBtn.style.display = "none";
 
+  updateComboUI();
   refreshHand();
 }
 
@@ -318,21 +394,21 @@ function canPlace(shape, r, c) {
 }
 
 /** =========================
- *  特效（粒子/閃光）
+ *  特效：粒子 / 閃光
  *  ========================= */
 function spawnClearParticles(cells) {
   for (const {r, c} of cells) {
     const cx = layout.gridX + c * CELL_SIZE + CELL_SIZE / 2;
     const cy = layout.gridY + r * CELL_SIZE + CELL_SIZE / 2;
 
-    const n = 10 + Math.floor(Math.random() * 5);
+    const n = 10 + Math.floor(Math.random() * 6);
     for (let i = 0; i < n; i++) {
       const ang = Math.random() * Math.PI * 2;
-      const spd = 2 + Math.random() * 5;
+      const spd = 2 + Math.random() * 6;
       particles.push({
         x: cx, y: cy,
         vx: Math.cos(ang) * spd,
-        vy: Math.sin(ang) * spd - 1.2,
+        vy: Math.sin(ang) * spd - 1.5,
         life: 1,
         size: 2 + Math.random() * 3
       });
@@ -346,7 +422,7 @@ function updateAndDrawParticles() {
     p.life -= 0.03;
     p.x += p.vx;
     p.y += p.vy;
-    p.vy += 0.18;
+    p.vy += 0.2;
     p.vx *= 0.98;
     p.vy *= 0.98;
 
@@ -358,13 +434,18 @@ function updateAndDrawParticles() {
     ctx.beginPath();
     ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
     ctx.fill();
+
+    ctx.fillStyle = "rgba(255,255,255,0.65)";
+    ctx.beginPath();
+    ctx.arc(p.x - 1, p.y - 1, p.size * 0.55, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   }
 }
 
 function spawnLineFlash(rows, cols) {
-  for (const r of rows) lineFlashes.push({ type: 'row', idx: r, life: 1 });
-  for (const c of cols) lineFlashes.push({ type: 'col', idx: c, life: 1 });
+  for (const r of rows) lineFlashes.push({ type:'row', idx:r, life:1 });
+  for (const c of cols) lineFlashes.push({ type:'col', idx:c, life:1 });
 }
 
 function updateAndDrawLineFlashes() {
@@ -376,7 +457,6 @@ function updateAndDrawLineFlashes() {
     ctx.save();
     ctx.globalAlpha = Math.max(0, f.life);
     ctx.fillStyle = "rgba(255,255,255,0.65)";
-
     if (f.type === 'row') {
       const y = layout.gridY + f.idx * CELL_SIZE;
       ctx.fillRect(layout.gridX, y, GRID_SIZE * CELL_SIZE, CELL_SIZE);
@@ -389,7 +469,66 @@ function updateAndDrawLineFlashes() {
 }
 
 /** =========================
+ *  浮字：breakdown + tier
+ *  ========================= */
+function pushFloatingBreakdown(x, y, tier, base, multi, comboBonus, gain) {
+  const lines = [];
+  lines.push({ txt: tier.name, color: tier.color, sizeMul: 1.25 });
+  lines.push({ txt: `+${gain} TOTAL`, color: "#FFD700", sizeMul: 1.05 });
+  lines.push({ txt: `+${base} Base`, color: "rgba(255,255,255,0.95)", sizeMul: 0.85 });
+  if (multi > 0) lines.push({ txt: `+${multi} Multi`, color: "rgba(124,252,255,0.95)", sizeMul: 0.85 });
+  lines.push({ txt: `+${comboBonus} Combo`, color: "rgba(183,255,106,0.95)", sizeMul: 0.85 });
+
+  floatingTexts.push({
+    lines,
+    x, y,
+    life: 1,
+    vy: 1.25,
+    size: 28,
+    align: "center",
+    stroke: "rgba(0,0,0,0.65)"
+  });
+}
+
+function updateAndDrawFloatingTexts() {
+  for (let i = floatingTexts.length - 1; i >= 0; i--) {
+    const t = floatingTexts[i];
+    t.y -= t.vy;
+    t.life -= 0.02;
+
+    const alpha = Math.max(0, t.life);
+    if (alpha <= 0) { floatingTexts.splice(i, 1); continue; }
+
+    let y = t.y;
+    for (let j = 0; j < t.lines.length; j++) {
+      const line = t.lines[j];
+      const sz = t.size * (line.sizeMul ?? 1);
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      drawTextWithStroke(line.txt, t.x, y, sz, line.color, t.stroke, t.align);
+      ctx.restore();
+      y += sz * 1.05;
+    }
+  }
+}
+
+/** =========================
+ *  計分規則（新）
+ *  多線加成：每多一條 +16
+ *  combo：25,45,65...
+ *  ========================= */
+function calcGain(lines, comboCount) {
+  const base = lines * GRID_SIZE;
+  const multiLineBonus = Math.max(0, lines - 1) * 16;
+  const comboBonus = 25 + (comboCount - 1) * 20;
+  const gain = base + multiLineBonus + comboBonus;
+  return { base, multiLineBonus, comboBonus, gain };
+}
+
+/** =========================
  *  清除＆計分
+ *  回傳：true=有消除、false=無消除
+ *  （combo 中斷只在成功放置但無消除時發生）
  *  ========================= */
 function checkAndClear() {
   const rs = [], cs = [];
@@ -403,49 +542,51 @@ function checkAndClear() {
     if (full) cs.push(c);
   }
 
-  if (rs.length + cs.length > 0) {
-    // 特效：收集被清掉格子
-    const clearedSet = new Set();
-    for (const r of rs) for (let c = 0; c < GRID_SIZE; c++) clearedSet.add(`${r},${c}`);
-    for (const c of cs) for (let r = 0; r < GRID_SIZE; r++) clearedSet.add(`${r},${c}`);
-    const clearedCells = Array.from(clearedSet).map(s => {
-      const [r, c] = s.split(',').map(Number);
-      return { r, c };
-    });
+  const lines = rs.length + cs.length;
+  if (lines <= 0) return false; // ✅ 沒消除：不動 combo
 
-    spawnLineFlash(rs, cs);
-    spawnClearParticles(clearedCells);
+  // ✅ 有消除：combo++
+  currentComboCount++;
+  updateComboUI();
 
-    currentComboCount++;
-    const lines = rs.length + cs.length;
-    const gain = (lines * GRID_SIZE) + (lines - 1) * 5 + (currentComboCount * 5);
-    score += gain;
+  // ✅ 計分
+  const { base, multiLineBonus, comboBonus, gain } = calcGain(lines, currentComboCount);
+  score += gain;
 
-    document.getElementById('scoreDisplay').innerText = String(score);
-
-    if (score > highScore) {
-      highScore = score;
-      localStorage.setItem('blockHighScore', String(score));
-      document.getElementById('highScore').innerText = String(score);
-    }
-
-    shakeIntensity = Math.max(shakeIntensity, lines * 8);
-
-    const praise = ["", "Good！", "Nice Play！", "Great！", "Perfect！", "GOD LIKE！"][Math.min(currentComboCount, 5)];
-    floatingTexts.push({
-      txt: praise,
-      x: layout.gridX + (GRID_SIZE * CELL_SIZE) / 2,
-      y: layout.gridY + (GRID_SIZE * CELL_SIZE) / 2 - 30,
-      life: 1,
-      size: 25 + currentComboCount * 5
-    });
-
-    rs.forEach(r => { for (let c = 0; c < GRID_SIZE; c++) grid[r][c] = 0; });
-    cs.forEach(c => { for (let r = 0; r < GRID_SIZE; r++) grid[r][c] = 0; });
-
-  } else {
-    currentComboCount = 0;
+  document.getElementById('scoreDisplay').innerText = String(score);
+  if (score > highScore) {
+    highScore = score;
+    localStorage.setItem('blockHighScore', String(score));
+    document.getElementById('highScore').innerText = String(score);
   }
+
+  // 被清掉格子（做粒子）
+  const clearedSet = new Set();
+  for (const r of rs) for (let c = 0; c < GRID_SIZE; c++) clearedSet.add(`${r},${c}`);
+  for (const c of cs) for (let r = 0; r < GRID_SIZE; r++) clearedSet.add(`${r},${c}`);
+  const clearedCells = Array.from(clearedSet).map(s => {
+    const [r, c] = s.split(',').map(Number);
+    return { r, c };
+  });
+
+  // 特效
+  spawnLineFlash(rs, cs);
+  spawnClearParticles(clearedCells);
+  shakeIntensity = Math.max(shakeIntensity, lines * 8);
+
+  // breakdown 浮字
+  const tier = getComboTier(currentComboCount);
+  pushFloatingBreakdown(
+    layout.gridX + (GRID_SIZE * CELL_SIZE) / 2,
+    layout.gridY + (GRID_SIZE * CELL_SIZE) / 2 - 60,
+    tier, base, multiLineBonus, comboBonus, gain
+  );
+
+  // 清掉
+  rs.forEach(r => { for (let c = 0; c < GRID_SIZE; c++) grid[r][c] = 0; });
+  cs.forEach(c => { for (let r = 0; r < GRID_SIZE; r++) grid[r][c] = 0; });
+
+  return true;
 }
 
 /** =========================
@@ -459,7 +600,7 @@ function getCanvasPosFromClient(clientX, clientY) {
 }
 
 /** =========================
- *  手牌命中 / 手牌 slot 中心點
+ *  手牌命中 / home anchor
  *  ========================= */
 function pickHandIndex(pos) {
   const { slots } = layout.hand;
@@ -481,7 +622,8 @@ function shapeBoundingBox(shape) {
   return { minR, minC, maxR, maxC, w: maxC - minC + 1, h: maxR - minR + 1 };
 }
 
-function getHandSlotCenterForShape(idx, shape) {
+// 回彈/拖曳起點：以 slot 置中，回傳「拖曳 anchor（左上角近似）」
+function getHandSlotHomeAnchor(idx, shape) {
   const slot = layout.hand.slots[idx];
   const bb = shapeBoundingBox(shape);
   const block = layout.handBlock;
@@ -493,27 +635,27 @@ function getHandSlotCenterForShape(idx, shape) {
   const startX = slot.x + (slot.w - shapeW) / 2;
   const startY = slot.y + (slot.h - shapeH) / 2;
 
-  // 以 shape 的 anchor (minR/minC 對應的相對位置) 的中心回去推
-  const anchorX = startX + (0 - bb.minC) * (block + gap) + block / 2;
-  const anchorY = startY + (0 - bb.minR) * (block + gap) + block / 2;
+  const anchorCenterX = startX + (0 - bb.minC) * (block + gap) + block / 2;
+  const anchorCenterY = startY + (0 - bb.minR) * (block + gap) + block / 2;
 
-  return { x: anchorX, y: anchorY };
+  return {
+    x: anchorCenterX - CELL_SIZE * 0.5,
+    y: anchorCenterY - CELL_SIZE * 0.5
+  };
 }
 
 /** =========================
- *  磁吸：找「附近最近且可放置」的格子
+ *  磁吸：以 anchor 找附近最近且可放置
  *  ========================= */
-function findBestMagnet(shape, posX, posY) {
-  // pointer 在 grid 座標
-  const gx = (posX - layout.gridX) / CELL_SIZE;
-  const gy = (posY - layout.gridY) / CELL_SIZE;
+function findBestMagnet(shape, anchorX, anchorY) {
+  const gx = (anchorX - layout.gridX) / CELL_SIZE;
+  const gy = (anchorY - layout.gridY) / CELL_SIZE;
 
   const baseC = Math.round(gx);
   const baseR = Math.round(gy);
 
   let best = null;
 
-  // 先找最近且可放置
   for (let dr = -MAGNET_SEARCH_RADIUS; dr <= MAGNET_SEARCH_RADIUS; dr++) {
     for (let dc = -MAGNET_SEARCH_RADIUS; dc <= MAGNET_SEARCH_RADIUS; dc++) {
       const r = baseR + dr;
@@ -524,8 +666,8 @@ function findBestMagnet(shape, posX, posY) {
       const snappedX = layout.gridX + c * CELL_SIZE;
       const snappedY = layout.gridY + r * CELL_SIZE;
 
-      const dx = (posX - snappedX) / CELL_SIZE;
-      const dy = (posY - snappedY) / CELL_SIZE;
+      const dx = (anchorX - snappedX) / CELL_SIZE;
+      const dy = (anchorY - snappedY) / CELL_SIZE;
       const distNorm = Math.hypot(dx, dy);
 
       if (best === null || distNorm < best.distNorm) {
@@ -535,12 +677,11 @@ function findBestMagnet(shape, posX, posY) {
   }
 
   if (!best) {
-    // 沒有可放置，仍回傳最近格（用於預覽 red/alpha）
     const r = baseR, c = baseC;
     const snappedX = layout.gridX + c * CELL_SIZE;
     const snappedY = layout.gridY + r * CELL_SIZE;
-    const dx = (posX - snappedX) / CELL_SIZE;
-    const dy = (posY - snappedY) / CELL_SIZE;
+    const dx = (anchorX - snappedX) / CELL_SIZE;
+    const dy = (anchorY - snappedY) / CELL_SIZE;
     const distNorm = Math.hypot(dx, dy);
     return { r, c, snappedX, snappedY, distNorm, can: false };
   }
@@ -548,18 +689,21 @@ function findBestMagnet(shape, posX, posY) {
 }
 
 /** =========================
- *  失敗回饋（震動＋抖動＋紅色提示＋回彈）
+ *  失敗回饋：震動＋紅提示＋回彈（不影響 combo）
  *  ========================= */
 function failFeedback() {
   shakeIntensity = Math.max(shakeIntensity, FAIL_SHAKE);
   failOverlayLife = 1;
 
   floatingTexts.push({
-    txt: "放不下！",
+    lines: [{ txt: "放不下！", color: "#FF6A6A", sizeMul: 1.1 }],
     x: layout.gridX + (GRID_SIZE * CELL_SIZE) / 2,
-    y: layout.gridY + (GRID_SIZE * CELL_SIZE) / 2,
+    y: layout.gridY + (GRID_SIZE * CELL_SIZE) / 2 - 30,
     life: 1,
-    size: 28
+    vy: 1.1,
+    size: 28,
+    align: "center",
+    stroke: "rgba(0,0,0,0.70)"
   });
 
   if (navigator.vibrate) {
@@ -567,25 +711,24 @@ function failFeedback() {
   }
 }
 
-function startBounceBack(idx, shape, fromX, fromY) {
+function startBounceBack(idx, shape, fromAnchorX, fromAnchorY) {
   bounceLife = 1;
   bounceShape = shape;
   bounceTheme = currentTheme;
 
-  bounceFromX = fromX;
-  bounceFromY = fromY;
+  bounceFromX = fromAnchorX;
+  bounceFromY = fromAnchorY;
 
-  const home = getHandSlotCenterForShape(idx, shape);
+  const home = getHandSlotHomeAnchor(idx, shape);
   bounceToX = home.x;
   bounceToY = home.y;
 }
 
 /** =========================
- *  輸入（Pointer Events）
+ *  輸入（Pointer）
  *  ========================= */
 function handlePointerDown(e) {
   if (gameOver) return;
-
   canvas.setPointerCapture?.(e.pointerId);
 
   const pos = getCanvasPosFromClient(e.clientX, e.clientY);
@@ -595,19 +738,31 @@ function handlePointerDown(e) {
   if (idx !== null) {
     draggingIdx = idx;
 
-    // 抓起來的位置偏移：讓方塊貼手但不跳位
-    dragOffsetX = CELL_SIZE * 0.45;
-    dragOffsetY = CELL_SIZE * 0.45;
+    dragStartPX = pointerX;
+    dragStartPY = pointerY;
+
+    const home = getHandSlotHomeAnchor(draggingIdx, hand[draggingIdx]);
+    dragStartAX = home.x;
+    dragStartAY = home.y;
+
+    dragNowAX = dragStartAX;
+    dragNowAY = dragStartAY;
   }
 }
 
-// 取 coalesced 的最後一筆，跟手更即時
 function handlePointerMove(e) {
   const events = (e.getCoalescedEvents && e.getCoalescedEvents()) || null;
   const last = events && events.length ? events[events.length - 1] : e;
 
   const pos = getCanvasPosFromClient(last.clientX, last.clientY);
   pointerX = pos.x; pointerY = pos.y;
+
+  if (draggingIdx !== null) {
+    const dx = (pointerX - dragStartPX) * DRAG_GAIN;
+    const dy = (pointerY - dragStartPY) * DRAG_GAIN;
+    dragNowAX = dragStartAX + dx;
+    dragNowAY = dragStartAY + dy;
+  }
 }
 
 function handlePointerUpOrCancel() {
@@ -615,35 +770,34 @@ function handlePointerUpOrCancel() {
 
   const shape = hand[draggingIdx];
   if (shape) {
-    // 計算拖曳圖形目前顯示位置（用於失敗回彈起點）
-    const best = findBestMagnet(shape, pointerX, pointerY);
-    const shouldMagnet = best.can && best.distNorm <= MAGNET_DISTANCE;
+    const anchorX = dragNowAX;
+    const anchorY = dragNowAY;
 
-    let drawX, drawY;
-    if (shouldMagnet) {
-      drawX = best.snappedX + CELL_SIZE * 0.10;
-      drawY = best.snappedY + CELL_SIZE * 0.10 - (DRAG_LIFT * 0.35);
-    } else {
-      drawX = pointerX - dragOffsetX;
-      drawY = pointerY - dragOffsetY - DRAG_LIFT;
-    }
+    const best = findBestMagnet(shape, anchorX, anchorY);
 
-    // 取落點：磁吸成功就用 best；不然用自由落點
+    // 放置：只要 best.can 就吸
     let r, c;
-    if (shouldMagnet) {
+    if (best.can) {
       r = best.r; c = best.c;
     } else {
-      r = Math.floor((pointerY - layout.gridY) / CELL_SIZE);
-      c = Math.floor((pointerX - layout.gridX) / CELL_SIZE);
+      r = Math.floor((anchorY - layout.gridY) / CELL_SIZE);
+      c = Math.floor((anchorX - layout.gridX) / CELL_SIZE);
     }
 
+    r = Math.max(0, Math.min(GRID_SIZE - 1, r));
+    c = Math.max(0, Math.min(GRID_SIZE - 1, c));
+
     if (canPlace(shape, r, c)) {
-      for (const coord of shape) {
-        grid[r + coord[0]][c + coord[1]] = 1;
-      }
+      // ✅ 成功放上棋盤
+      for (const coord of shape) grid[r + coord[0]][c + coord[1]] = 1;
       hand[draggingIdx] = null;
 
-      checkAndClear();
+      // ✅ combo 只有在「成功放置但沒消除」才清
+      const cleared = checkAndClear();
+      if (!cleared) {
+        currentComboCount = 0;
+        updateComboUI();
+      }
 
       if (hand.every(h => h === null)) refreshHand();
 
@@ -662,9 +816,9 @@ function handlePointerUpOrCancel() {
       if (dead) gameOver = true;
 
     } else {
-      // 失敗：震動＋紅提示＋回彈
+      // ❌ 放置失敗：不影響 combo，只回饋＋回彈
       failFeedback();
-      startBounceBack(draggingIdx, shape, drawX, drawY);
+      startBounceBack(draggingIdx, shape, anchorX, anchorY);
     }
   }
 
@@ -675,7 +829,6 @@ canvas.addEventListener('pointerdown', handlePointerDown);
 window.addEventListener('pointermove', handlePointerMove);
 window.addEventListener('pointerup', handlePointerUpOrCancel);
 window.addEventListener('pointercancel', handlePointerUpOrCancel);
-// 低延遲（支援就更順）
 window.addEventListener('pointerrawupdate', handlePointerMove);
 
 /** =========================
@@ -684,7 +837,6 @@ window.addEventListener('pointerrawupdate', handlePointerMove);
 function drawHand() {
   const { slots } = layout.hand;
 
-  // 手機底部手牌區背景
   if (layout.mode === "mobile") {
     ctx.save();
     ctx.fillStyle = "rgba(0,0,0,0.25)";
@@ -696,7 +848,6 @@ function drawHand() {
     const shape = hand[i];
     const slot = slots[i];
 
-    // slot 框（點選範圍）
     ctx.save();
     ctx.globalAlpha = 0.35;
     ctx.strokeStyle = "rgba(255,255,255,0.25)";
@@ -726,35 +877,28 @@ function drawHand() {
 }
 
 /** =========================
- *  繪製：回彈動畫
+ *  回彈動畫
  *  ========================= */
 function updateAndDrawBounce() {
   if (bounceLife <= 0 || !bounceShape || !bounceTheme) return;
 
-  // easeOutBack：回彈很爽
   const t = 1 - bounceLife;
   const c1 = 1.70158;
   const c3 = c1 + 1;
   const easeOutBack = (x) => 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2);
-
   const k = easeOutBack(Math.min(1, Math.max(0, t)));
 
-  // 以「anchor」中心插值，畫時再轉成左上角
-  const cx = bounceFromX + (bounceToX - bounceFromX) * k;
-  const cy = bounceFromY + (bounceToY - bounceFromY) * k;
+  const ax = bounceFromX + (bounceToX - bounceFromX) * k;
+  const ay = bounceFromY + (bounceToY - bounceFromY) * k;
 
-  // 這裡 bounceFrom/bounceTo 是以 shape anchor 近似點，所以直接用它當左上角略偏
-  // 為了視覺好看，做小修正：回彈過程縮小一點點再回來
-  const scale = 0.98 + 0.04 * (1 - Math.abs(0.5 - t) * 2);
+  const scale = 0.96 + 0.06 * (1 - Math.abs(0.5 - t) * 2);
 
   ctx.save();
-  ctx.globalAlpha = 0.95 * bounceLife;
+  ctx.globalAlpha = 0.9 * bounceLife;
 
-  // 把 shape 畫成 CELL_SIZE 的尺寸（跟拖曳時一致）
   for (const coord of bounceShape) {
-    const x = cx + coord[1] * CELL_SIZE;
-    const y = cy + coord[0] * CELL_SIZE;
-    // scale 以格子左上角為基準
+    const x = ax + coord[1] * CELL_SIZE;
+    const y = (ay - DRAG_LIFT * 0.45) + coord[0] * CELL_SIZE;
     const sx = x + (CELL_SIZE - 4) * (1 - scale) * 0.5;
     const sy = y + (CELL_SIZE - 4) * (1 - scale) * 0.5;
     drawBlock(sx, sy, (CELL_SIZE - 4) * scale, 8, bounceTheme, ctx.globalAlpha);
@@ -806,22 +950,22 @@ function animate() {
       }
     }
 
-    // 清除閃光（在方塊上方）
+    // 清除閃光
     updateAndDrawLineFlashes();
 
-    // 拖曳
+    // 拖曳顯示
     if (draggingIdx !== null && hand[draggingIdx]) {
       const shape = hand[draggingIdx];
+      const anchorX = dragNowAX;
+      const anchorY = dragNowAY;
 
-      const best = findBestMagnet(shape, pointerX, pointerY);
-      const shouldMagnet = best.can && best.distNorm <= MAGNET_DISTANCE;
-
-      // 預覽落點（若可放）
+      // 預覽（只要附近有可放就吸那格）
+      const best = findBestMagnet(shape, anchorX, anchorY);
       let previewR, previewC;
-      if (shouldMagnet) { previewR = best.r; previewC = best.c; }
+      if (best.can) { previewR = best.r; previewC = best.c; }
       else {
-        previewR = Math.floor((pointerY - layout.gridY) / CELL_SIZE);
-        previewC = Math.floor((pointerX - layout.gridX) / CELL_SIZE);
+        previewR = Math.floor((anchorY - layout.gridY) / CELL_SIZE);
+        previewC = Math.floor((anchorX - layout.gridX) / CELL_SIZE);
       }
 
       if (canPlace(shape, previewR, previewC)) {
@@ -831,7 +975,6 @@ function animate() {
           drawBlock(x, y, CELL_SIZE - 4, 8, currentTheme, PREVIEW_ALPHA_OK);
         }
       } else {
-        // 放不下預覽：淡淡紅
         ctx.save();
         ctx.globalAlpha = PREVIEW_ALPHA_BAD;
         ctx.fillStyle = "rgba(255,80,80,1)";
@@ -839,16 +982,9 @@ function animate() {
         ctx.restore();
       }
 
-      // 拖曳顯示位置：跟手 + 上抬，或磁吸吸到格子
-      let drawX, drawY;
-      if (shouldMagnet) {
-        drawX = best.snappedX + CELL_SIZE * 0.10;
-        drawY = best.snappedY + CELL_SIZE * 0.10 - (DRAG_LIFT * 0.35);
-      } else {
-        drawX = pointerX - dragOffsetX;
-        drawY = pointerY - dragOffsetY - DRAG_LIFT;
-      }
-
+      // 本體（上抬）
+      const drawX = anchorX;
+      const drawY = anchorY - DRAG_LIFT;
       for (const coord of shape) {
         const x = drawX + coord[1] * CELL_SIZE;
         const y = drawY + coord[0] * CELL_SIZE;
@@ -859,14 +995,17 @@ function animate() {
     // 手牌
     drawHand();
 
-    // 粒子（最上層）
+    // 粒子
     updateAndDrawParticles();
 
-    // 回彈（最上層，覆蓋拖曳後的殘影感）
+    // 回彈
     updateAndDrawBounce();
+
+    // 浮字
+    updateAndDrawFloatingTexts();
   }
 
-  // 失敗紅色提示 overlay
+  // 失敗紅提示 overlay
   if (failOverlayLife > 0) {
     ctx.save();
     ctx.globalAlpha = 0.35 * failOverlayLife;
@@ -876,22 +1015,6 @@ function animate() {
     failOverlayLife -= 0.06;
     if (failOverlayLife < 0) failOverlayLife = 0;
   }
-
-  // 浮字
-  for (let i = floatingTexts.length - 1; i >= 0; i--) {
-    const t = floatingTexts[i];
-    t.y -= 1;
-    t.life -= 0.02;
-
-    ctx.globalAlpha = Math.max(0, t.life);
-    ctx.fillStyle = "#FFD700";
-    ctx.textAlign = "center";
-    ctx.font = "bold " + t.size + "px Arial";
-    ctx.fillText(t.txt, t.x, t.y);
-
-    if (t.life <= 0) floatingTexts.splice(i, 1);
-  }
-  ctx.globalAlpha = 1;
 
   // GAME OVER
   if (gameOver) {
@@ -914,11 +1037,8 @@ function animate() {
 function handleResize() {
   const prevMode = layout?.mode;
   const newLayout = computeLayout();
-  if (!layout || prevMode !== newLayout.mode) {
-    applyLayout(newLayout);
-  } else {
-    applyLayout(newLayout);
-  }
+  if (!layout || prevMode !== newLayout.mode) applyLayout(newLayout);
+  else applyLayout(newLayout);
 }
 window.addEventListener('resize', handleResize);
 

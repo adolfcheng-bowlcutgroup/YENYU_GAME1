@@ -15,7 +15,7 @@
       font-family: Arial, sans-serif;
       margin: 0;
       height: 100vh;   /* fallback */
-      height: 100dvh;  /* iOS/modern mobile stable viewport */
+      height: 100dvh;  /* mobile stable viewport */
       justify-content: center;
       overflow: hidden;
     }
@@ -53,9 +53,7 @@
       width: 100%;
       height: auto;
       display: block;
-
-      /* 手機關鍵：讓瀏覽器不要把拖曳當作捲動/縮放手勢 */
-      touch-action: none;
+      touch-action: none; /* 關鍵：手機避免捲動/縮放手勢干擾 */
     }
     #restartBtn {
       display: none;
@@ -83,19 +81,34 @@
   </div>
 
 <script>
-/** 遊戲核心設定 **/
+/** =========================
+ *  遊戲核心設定
+ *  ========================= */
 const GRID_SIZE = 9;
 const CELL_SIZE = 55;
-const SIDEBAR = 250;
+
+// 桌機右側手牌寬
+const SIDEBAR_W = 250;
+
+// 手機底部手牌高度（可依視覺微調）
+const BOTTOMBAR_H = 220;
+
+// 磁吸設定
+const MAGNET_DISTANCE = 0.45; // 以 CELL_SIZE 的比例，越大越容易吸附 (0~1)
+const MAGNET_OK_ALPHA = 0.30;
+
+// 失敗回饋
+const FAIL_SHAKE = 14;
+const FAIL_VIBRATION_PATTERN = [25, 30, 25];
+
+// 判斷「手機布局」門檻（你可調整）
+function isMobileLayout() {
+  return window.matchMedia("(max-width: 600px)").matches;
+}
 
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d', { alpha: false });
 const restartBtn = document.getElementById('restartBtn');
-
-const RAW_WIDTH = (GRID_SIZE * CELL_SIZE) + SIDEBAR;
-const RAW_HEIGHT = GRID_SIZE * CELL_SIZE;
-canvas.width = RAW_WIDTH;
-canvas.height = RAW_HEIGHT;
 
 const THEMES = [
   { main: '#4A90E2', dark: '#21508A', light: '#A4C8F5' },
@@ -122,16 +135,97 @@ const SHAPE_DEFS = [
   { shape: [[0,0], [0,1], [0,2], [1,0], [1,1], [1,2], [2,0], [2,1], [2,2]], weight: 3 }
 ];
 
-let currentTheme, grid, hand, score, highScore;
+/** =========================
+ *  狀態
+ *  ========================= */
+let currentTheme;
+let grid, hand, score, highScore;
 let draggingIdx = null;
-let mouseX = 0, mouseY = 0;
+let pointerX = 0, pointerY = 0;
 let gameOver = false;
 
 let floatingTexts = [];
 let shakeIntensity = 0;
 let currentComboCount = 0;
 
-/** 繪圖工具 **/
+// layout
+let layout = null; // { mode, rawW, rawH, gridX, gridY, hand: {x,y,w,h, slots:[...]}, handBlock, handGap, ... }
+
+/** =========================
+ *  Layout 計算與 Canvas 尺寸
+ *  ========================= */
+function computeLayout() {
+  const mobile = isMobileLayout();
+  if (mobile) {
+    const rawW = GRID_SIZE * CELL_SIZE;
+    const rawH = GRID_SIZE * CELL_SIZE + BOTTOMBAR_H;
+
+    // 底部手牌區
+    const handX = 0;
+    const handY = GRID_SIZE * CELL_SIZE;
+    const handW = rawW;
+    const handH = BOTTOMBAR_H;
+
+    // 三個 slot（可按需要微調 padding）
+    const padX = 20;
+    const padY = 25;
+    const slotW = (handW - padX * 2) / 3;
+    const slotH = handH - padY * 2;
+
+    const slots = [0,1,2].map(i => ({
+      x: handX + padX + i * slotW,
+      y: handY + padY,
+      w: slotW,
+      h: slotH
+    }));
+
+    return {
+      mode: "mobile",
+      rawW, rawH,
+      gridX: 0, gridY: 0,
+      hand: { x: handX, y: handY, w: handW, h: handH, slots },
+      // 手牌顯示比例：手機略放大，好點選
+      handBlock: 24,
+      handCellGap: 4
+    };
+  } else {
+    const rawW = GRID_SIZE * CELL_SIZE + SIDEBAR_W;
+    const rawH = GRID_SIZE * CELL_SIZE;
+
+    // 右側手牌區
+    const handX = GRID_SIZE * CELL_SIZE;
+    const handY = 0;
+    const handW = SIDEBAR_W;
+    const handH = rawH;
+
+    // 三個 slot，沿用你原本大概的排法
+    const slots = [0,1,2].map(i => ({
+      x: handX + 20,
+      y: 40 + i * 150,
+      w: handW - 40,
+      h: 120
+    }));
+
+    return {
+      mode: "desktop",
+      rawW, rawH,
+      gridX: 0, gridY: 0,
+      hand: { x: handX, y: handY, w: handW, h: handH, slots },
+      handBlock: 20,
+      handCellGap: 2
+    };
+  }
+}
+
+function applyLayout(newLayout) {
+  layout = newLayout;
+  canvas.width = layout.rawW;
+  canvas.height = layout.rawH;
+}
+
+/** =========================
+ *  畫圖工具
+ *  ========================= */
 function pathRoundedRect(x, y, w, h, r) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
@@ -162,8 +256,13 @@ function drawBlock(x, y, size, r, theme, alpha = 1.0) {
   ctx.restore();
 }
 
-/** 遊戲流程 **/
+/** =========================
+ *  遊戲流程
+ *  ========================= */
 function resetGame() {
+  // layout
+  applyLayout(computeLayout());
+
   currentTheme = THEMES[Math.floor(Math.random() * THEMES.length)];
   restartBtn.style.backgroundColor = currentTheme.main;
 
@@ -174,6 +273,7 @@ function resetGame() {
   gameOver = false;
   floatingTexts = [];
   currentComboCount = 0;
+  shakeIntensity = 0;
 
   document.getElementById('scoreDisplay').innerText = "0";
   document.getElementById('highScore').innerText = String(highScore);
@@ -232,12 +332,13 @@ function checkAndClear() {
       document.getElementById('highScore').innerText = String(score);
     }
 
-    shakeIntensity = lines * 8;
+    shakeIntensity = Math.max(shakeIntensity, lines * 8);
+
     const praise = ["", "Good！", "Nice Play！", "Great！", "Perfect！", "GOD LIKE！"][Math.min(currentComboCount, 5)];
     floatingTexts.push({
       txt: praise,
-      x: (GRID_SIZE * CELL_SIZE) / 2,
-      y: (GRID_SIZE * CELL_SIZE) / 2 - 30,
+      x: layout.gridX + (GRID_SIZE * CELL_SIZE) / 2,
+      y: layout.gridY + (GRID_SIZE * CELL_SIZE) / 2 - 30,
       life: 1,
       size: 25 + currentComboCount * 5
     });
@@ -250,41 +351,115 @@ function checkAndClear() {
   }
 }
 
-/** 位置換算（CSS縮放 -> Raw座標） **/
+/** =========================
+ *  座標換算（CSS縮放 -> Raw座標）
+ *  ========================= */
 function getCanvasPosFromClient(clientX, clientY) {
   const rect = canvas.getBoundingClientRect();
-  const x = (clientX - rect.left) * (RAW_WIDTH / (rect.width || 1));
-  const y = (clientY - rect.top) * (RAW_HEIGHT / (rect.height || 1));
+  const x = (clientX - rect.left) * (canvas.width / (rect.width || 1));
+  const y = (clientY - rect.top) * (canvas.height / (rect.height || 1));
   return { x, y };
 }
 
-/** 輸入（Pointer Events 一套吃滑鼠/觸控） **/
+/** =========================
+ *  手牌命中測試
+ *  ========================= */
+function pickHandIndex(pos) {
+  const { slots } = layout.hand;
+  for (let i = 0; i < slots.length; i++) {
+    const s = slots[i];
+    if (pos.x >= s.x && pos.x <= s.x + s.w && pos.y >= s.y && pos.y <= s.y + s.h) {
+      if (hand[i]) return i;
+    }
+  }
+  return null;
+}
+
+/** =========================
+ *  磁吸/吸附：計算「建議落點格」
+ *  - 回傳 { r, c, snappedX, snappedY, can, distNorm }
+ *  ========================= */
+function getMagnetTarget(shape, posX, posY) {
+  // 以「指標位置」作為 anchor 方塊 (shape[0]) 的參考點
+  // 我們希望 anchor 對齊某個格子的左上角
+  const gx = (posX - layout.gridX) / CELL_SIZE;
+  const gy = (posY - layout.gridY) / CELL_SIZE;
+
+  // 最近格子 index（允許在邊界附近）
+  const c = Math.round(gx);
+  const r = Math.round(gy);
+
+  // 以格子的左上角作吸附點
+  const snappedX = layout.gridX + c * CELL_SIZE;
+  const snappedY = layout.gridY + r * CELL_SIZE;
+
+  // 距離（用 cell 作正規化）
+  const dx = (posX - snappedX) / CELL_SIZE;
+  const dy = (posY - snappedY) / CELL_SIZE;
+  const distNorm = Math.hypot(dx, dy);
+
+  const can = canPlace(shape, r, c);
+  return { r, c, snappedX, snappedY, can, distNorm };
+}
+
+/** =========================
+ *  失敗回饋（震動＋抖動＋浮字）
+ *  ========================= */
+function failFeedback() {
+  shakeIntensity = Math.max(shakeIntensity, FAIL_SHAKE);
+  floatingTexts.push({
+    txt: "放不下！",
+    x: layout.gridX + (GRID_SIZE * CELL_SIZE) / 2,
+    y: layout.gridY + (GRID_SIZE * CELL_SIZE) / 2,
+    life: 1,
+    size: 28
+  });
+
+  if (navigator.vibrate) {
+    try { navigator.vibrate(FAIL_VIBRATION_PATTERN); } catch (_) {}
+  }
+}
+
+/** =========================
+ *  輸入（Pointer Events）
+ *  ========================= */
 function handlePointerDown(e) {
   if (gameOver) return;
+
   canvas.setPointerCapture?.(e.pointerId);
 
   const pos = getCanvasPosFromClient(e.clientX, e.clientY);
-  mouseX = pos.x; mouseY = pos.y;
+  pointerX = pos.x; pointerY = pos.y;
 
-  if (pos.x > GRID_SIZE * CELL_SIZE) {
-    const idx = Math.floor((pos.y - 40) / 150);
-    if (idx >= 0 && idx < 3 && hand[idx]) draggingIdx = idx;
-  }
+  const idx = pickHandIndex(pos);
+  if (idx !== null) draggingIdx = idx;
 }
 
 function handlePointerMove(e) {
   const pos = getCanvasPosFromClient(e.clientX, e.clientY);
-  mouseX = pos.x; mouseY = pos.y;
+  pointerX = pos.x; pointerY = pos.y;
 }
 
 function handlePointerUpOrCancel() {
-  if (draggingIdx !== null) {
-    // 手機穩定：用 floor 不用 round，落點比較不抖
-    const r = Math.floor(mouseY / CELL_SIZE);
-    const c = Math.floor(mouseX / CELL_SIZE);
+  if (draggingIdx === null) return;
 
-    if (canPlace(hand[draggingIdx], r, c)) {
-      for (const coord of hand[draggingIdx]) {
+  const shape = hand[draggingIdx];
+  if (shape) {
+    // 以 pointer 當 anchor，套用磁吸落點
+    const target = getMagnetTarget(shape, pointerX, pointerY);
+
+    // 實際落點採用：若距離夠近且可放 -> 吸附落點；否則用 floor 的自由落點
+    let r, c;
+    if (target.distNorm <= MAGNET_DISTANCE && target.can) {
+      r = target.r; c = target.c;
+    } else {
+      // 自由落點（不吸附）採 floor，更穩
+      r = Math.floor((pointerY - layout.gridY) / CELL_SIZE);
+      c = Math.floor((pointerX - layout.gridX) / CELL_SIZE);
+    }
+
+    if (canPlace(shape, r, c)) {
+      for (const coord of shape) {
         grid[r + coord[0]][c + coord[1]] = 1;
       }
       hand[draggingIdx] = null;
@@ -293,7 +468,7 @@ function handlePointerUpOrCancel() {
 
       if (hand.every(h => h === null)) refreshHand();
 
-      // 判定是否死局
+      // 判定死局
       let dead = true;
       for (const s of hand) {
         if (!s) continue;
@@ -306,9 +481,13 @@ function handlePointerUpOrCancel() {
         if (!dead) break;
       }
       if (dead) gameOver = true;
+    } else {
+      // 放置失敗：震動回饋
+      failFeedback();
     }
-    draggingIdx = null;
   }
+
+  draggingIdx = null;
 }
 
 canvas.addEventListener('pointerdown', handlePointerDown);
@@ -316,57 +495,148 @@ window.addEventListener('pointermove', handlePointerMove);
 window.addEventListener('pointerup', handlePointerUpOrCancel);
 window.addEventListener('pointercancel', handlePointerUpOrCancel);
 
-/** 繪製 **/
+/** =========================
+ *  繪製：手牌
+ *  ========================= */
+function drawHand() {
+  const { slots } = layout.hand;
+
+  // 手牌區背景（手機底部做分隔感更明顯）
+  if (layout.mode === "mobile") {
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,0.25)";
+    ctx.fillRect(layout.hand.x, layout.hand.y, layout.hand.w, layout.hand.h);
+    ctx.restore();
+  }
+
+  for (let i = 0; i < 3; i++) {
+    const s = hand[i];
+    const slot = slots[i];
+
+    // slot 框（可視化點選範圍，手機更友善）
+    ctx.save();
+    ctx.globalAlpha = 0.35;
+    ctx.strokeStyle = "rgba(255,255,255,0.25)";
+    ctx.lineWidth = 2;
+    pathRoundedRect(slot.x + 6, slot.y + 6, slot.w - 12, slot.h - 12, 14);
+    ctx.stroke();
+    ctx.restore();
+
+    if (!s || i === draggingIdx) continue;
+
+    // 把 shape 畫在 slot 中央
+    const bb = shapeBoundingBox(s);
+    const block = layout.handBlock;
+    const gap = layout.handCellGap;
+
+    const shapeW = bb.w * (block + gap) - gap;
+    const shapeH = bb.h * (block + gap) - gap;
+
+    const startX = slot.x + (slot.w - shapeW) / 2;
+    const startY = slot.y + (slot.h - shapeH) / 2;
+
+    for (const coord of s) {
+      const x = startX + (coord[1] - bb.minC) * (block + gap);
+      const y = startY + (coord[0] - bb.minR) * (block + gap);
+      drawBlock(x, y, block, 6, currentTheme, 1);
+    }
+  }
+}
+
+function shapeBoundingBox(shape) {
+  let minR = Infinity, minC = Infinity, maxR = -Infinity, maxC = -Infinity;
+  for (const [r,c] of shape) {
+    minR = Math.min(minR, r); minC = Math.min(minC, c);
+    maxR = Math.max(maxR, r); maxC = Math.max(maxC, c);
+  }
+  return { minR, minC, maxR, maxC, w: maxC - minC + 1, h: maxR - minR + 1 };
+}
+
+/** =========================
+ *  繪製：主迴圈
+ *  ========================= */
 function animate() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   ctx.save();
+
+  // 抖動（成功清線/失敗放置）
   if (shakeIntensity > 0) {
     ctx.translate((Math.random() - 0.5) * shakeIntensity, (Math.random() - 0.5) * shakeIntensity);
     shakeIntensity *= 0.8;
+    if (shakeIntensity < 0.3) shakeIntensity = 0;
   }
 
-  // 背景格
+  // 背景格（只畫棋盤區）
   ctx.fillStyle = '#333';
   for (let r = 0; r < GRID_SIZE; r++) {
     for (let c = 0; c < GRID_SIZE; c++) {
-      ctx.fillRect(c * CELL_SIZE + 2, r * CELL_SIZE + 2, CELL_SIZE - 4, CELL_SIZE - 4);
+      const x = layout.gridX + c * CELL_SIZE + 2;
+      const y = layout.gridY + r * CELL_SIZE + 2;
+      ctx.fillRect(x, y, CELL_SIZE - 4, CELL_SIZE - 4);
     }
   }
 
+  // 固定方塊
   if (currentTheme) {
-    // 固定方塊
     for (let r = 0; r < GRID_SIZE; r++) {
       for (let c = 0; c < GRID_SIZE; c++) {
-        if (grid[r][c]) drawBlock(c * CELL_SIZE + 2, r * CELL_SIZE + 2, CELL_SIZE - 4, 8, currentTheme);
-      }
-    }
-
-    // 預覽（半透明）
-    if (draggingIdx !== null && hand[draggingIdx]) {
-      const r = Math.floor(mouseY / CELL_SIZE);
-      const c = Math.floor(mouseX / CELL_SIZE);
-      if (canPlace(hand[draggingIdx], r, c)) {
-        for (const coord of hand[draggingIdx]) {
-          drawBlock((c + coord[1]) * CELL_SIZE + 2, (r + coord[0]) * CELL_SIZE + 2, CELL_SIZE - 4, 8, currentTheme, 0.3);
+        if (grid[r][c]) {
+          const x = layout.gridX + c * CELL_SIZE + 2;
+          const y = layout.gridY + r * CELL_SIZE + 2;
+          drawBlock(x, y, CELL_SIZE - 4, 8, currentTheme);
         }
       }
     }
 
-    // 右側手牌
-    hand.forEach((s, i) => {
-      if (!s || i === draggingIdx) return;
-      const bx = GRID_SIZE * CELL_SIZE + 60;
-      const by = 60 + i * 150;
-      for (const coord of s) drawBlock(bx + coord[1] * 22, by + coord[0] * 22, 20, 4, currentTheme);
-    });
-
-    // 跟隨拖曳的方塊
+    // 拖曳預覽＆磁吸
     if (draggingIdx !== null && hand[draggingIdx]) {
-      for (const coord of hand[draggingIdx]) {
-        drawBlock(mouseX + coord[1] * CELL_SIZE - 25, mouseY + coord[0] * CELL_SIZE - 25, CELL_SIZE - 4, 8, currentTheme);
+      const shape = hand[draggingIdx];
+
+      const target = getMagnetTarget(shape, pointerX, pointerY);
+
+      const shouldMagnet = (target.distNorm <= MAGNET_DISTANCE && target.can);
+
+      // 預覽落點（如果可放置）
+      let previewR, previewC;
+      if (shouldMagnet) {
+        previewR = target.r; previewC = target.c;
+      } else {
+        previewR = Math.floor((pointerY - layout.gridY) / CELL_SIZE);
+        previewC = Math.floor((pointerX - layout.gridX) / CELL_SIZE);
+      }
+
+      if (canPlace(shape, previewR, previewC)) {
+        for (const coord of shape) {
+          const x = layout.gridX + (previewC + coord[1]) * CELL_SIZE + 2;
+          const y = layout.gridY + (previewR + coord[0]) * CELL_SIZE + 2;
+          drawBlock(x, y, CELL_SIZE - 4, 8, currentTheme, MAGNET_OK_ALPHA);
+        }
+      }
+
+      // 拖曳中的方塊「顯示位置」：磁吸時吸到格子左上角；否則跟手指
+      let drawX = pointerX;
+      let drawY = pointerY;
+
+      if (shouldMagnet) {
+        // 讓 anchor（shape 的 [0,0]）貼到 snappedX/Y，再加上偏移讓顯示更自然
+        // 你原本用 -25，這裡用 CELL_SIZE * 0.45 讓視覺接近中心
+        drawX = target.snappedX + CELL_SIZE * 0.10;
+        drawY = target.snappedY + CELL_SIZE * 0.10;
+      } else {
+        drawX = pointerX - CELL_SIZE * 0.45;
+        drawY = pointerY - CELL_SIZE * 0.45;
+      }
+
+      for (const coord of shape) {
+        const x = drawX + coord[1] * CELL_SIZE;
+        const y = drawY + coord[0] * CELL_SIZE;
+        drawBlock(x, y, CELL_SIZE - 4, 8, currentTheme, 1);
       }
     }
+
+    // 手牌（底部 or 右側）
+    drawHand();
   }
 
   // 浮字
@@ -385,7 +655,7 @@ function animate() {
   }
   ctx.globalAlpha = 1;
 
-  // Game over overlay
+  // GAME OVER
   if (gameOver) {
     ctx.fillStyle = "rgba(0,0,0,0.8)";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -400,13 +670,25 @@ function animate() {
   requestAnimationFrame(animate);
 }
 
-// 保險：螢幕旋轉/縮放後，CSS尺寸會變，但你用 boundingRect 換算，所以不用改 canvas 實體尺寸。
-// 這裡主要是避免某些瀏覽器在旋轉時 pointer 座標短暫跳動。
-window.addEventListener('resize', () => {
-  // no-op: keep for future layout adjustments
-});
+/** =========================
+ *  resize：切換手機/桌機布局（不重置遊戲）
+ *  ========================= */
+function handleResize() {
+  const prevMode = layout?.mode;
+  const newLayout = computeLayout();
+  if (!layout || prevMode !== newLayout.mode) {
+    // 模式切換（手機<->桌機），只更新 canvas 尺寸與 layout，不動棋盤/手牌/分數
+    applyLayout(newLayout);
+  } else {
+    // 同模式尺寸更新（大多 no-op）
+    applyLayout(newLayout);
+  }
+}
+window.addEventListener('resize', handleResize);
 
-/** 啟動 **/
+/** =========================
+ *  啟動
+ *  ========================= */
 resetGame();
 animate();
 </script>

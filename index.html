@@ -291,9 +291,9 @@
 
         <div id="viewBoard" style="display:none;">
           <div class="actions" style="margin-top:0;">
-            <button id="btnBackToLogin" class="btn btnGhost">返回</button>
+            <button id="btnBackToLogin" class="btn btnGhost">回到首頁</button>
             <button id="btnRefreshBoard" class="btn btnGhost">刷新</button>
-            <button id="btnPlayAgain" class="btn btnPrimary">再玩一次</button>
+            <button id="btnPlayAgain" class="btn btnPrimary">再玩一局</button>
           </div>
 
           <div class="board" style="margin-top:12px;">
@@ -348,7 +348,6 @@
   }
   const deviceUid = getOrCreateDeviceUid();
 
-  // 送出分數：同裝置保留最高分（name 可更新）
   async function remoteUpsertBest(name, score) {
     name = (name || "").trim().slice(0, 16);
     if (!name) return;
@@ -358,37 +357,24 @@
     const prev = snap.exists() ? Number(snap.data().score || 0) : 0;
 
     if (score > prev) {
-      await setDoc(ref, {
-        uid: deviceUid,
-        name,
-        score,
-        updatedAt: serverTimestamp(),
-      }, { merge: true });
+      await setDoc(ref, { uid: deviceUid, name, score, updatedAt: serverTimestamp() }, { merge: true });
     } else {
-      // 分數沒破紀錄，也更新名字（讓榜上名字跟著玩家最新設定）
-      await setDoc(ref, {
-        uid: deviceUid,
-        name,
-        updatedAt: serverTimestamp(),
-      }, { merge: true });
+      await setDoc(ref, { uid: deviceUid, name, updatedAt: serverTimestamp() }, { merge: true });
     }
   }
 
-  // 取 Top N
   async function remoteFetchTop(topN = 10) {
     const q = query(collection(db, LEADERBOARD_COL), orderBy("score", "desc"), limit(topN));
     const snap = await getDocs(q);
     return snap.docs.map(d => d.data());
   }
 
-  // 取自己的資料（uid doc）
   async function remoteFetchMe() {
     const ref = doc(db, LEADERBOARD_COL, deviceUid);
     const snap = await getDoc(ref);
     return snap.exists() ? snap.data() : null;
   }
 
-  // 算自己的排名：rank = count(score > myScore) + 1
   async function remoteComputeMyRank(myScore) {
     if (typeof myScore !== "number") return null;
     const col = collection(db, LEADERBOARD_COL);
@@ -399,15 +385,11 @@
   }
 
   /* =========================================================
-   *  Overlay UI（登入 + 排行榜）
+   *  Overlay UI
    * ========================================================= */
   const LS_NAME_KEY = "blockPlayerName";
-  function getPlayerName() {
-    return (localStorage.getItem(LS_NAME_KEY) || "").trim();
-  }
-  function setPlayerName(name) {
-    localStorage.setItem(LS_NAME_KEY, name.trim());
-  }
+  function getPlayerName() { return (localStorage.getItem(LS_NAME_KEY) || "").trim(); }
+  function setPlayerName(name) { localStorage.setItem(LS_NAME_KEY, name.trim()); }
 
   const overlay = document.getElementById("overlay");
   const tabLogin = document.getElementById("tabLogin");
@@ -417,9 +399,9 @@
   const nameInput = document.getElementById("nameInput");
   const btnStart = document.getElementById("btnStart");
   const btnToBoard = document.getElementById("btnToBoard");
-  const btnBackToLogin = document.getElementById("btnBackToLogin");
+  const btnBackToLogin = document.getElementById("btnBackToLogin"); // 回到首頁
   const btnRefreshBoard = document.getElementById("btnRefreshBoard");
-  const btnPlayAgain = document.getElementById("btnPlayAgain");
+  const btnPlayAgain = document.getElementById("btnPlayAgain"); // 再玩一局
   const playerMini = document.getElementById("playerMini");
   const boardList = document.getElementById("boardList");
   const boardStatus = document.getElementById("boardStatus");
@@ -443,13 +425,20 @@
   tabLogin.onclick = () => switchTab("login");
   tabBoard.onclick = () => switchTab("board");
   btnToBoard.onclick = () => switchTab("board");
-  btnBackToLogin.onclick = () => switchTab("login");
+
+  // ✅ 回到首頁：回登入頁（可改名）
+  btnBackToLogin.onclick = () => {
+    showOverlay();
+    switchTab("login");
+    nameInput.focus();
+  };
+
   btnRefreshBoard.onclick = () => refreshBoardUI();
 
+  // ✅ 再玩一局：關 overlay 直接開新局
   btnPlayAgain.onclick = () => {
     hideOverlay();
     gameOver = false;
-    restartBtn.style.display = "none";
     resetGame();
   };
 
@@ -463,7 +452,7 @@
     setPlayerName(name);
     syncPlayerMini();
     hideOverlay();
-    resetGame(); // 開始新局
+    resetGame();
   };
   nameInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") btnStart.click();
@@ -499,6 +488,7 @@
     try {
       const top = await remoteFetchTop(10);
 
+      // ✅ 沒資料：顯示你要的提示文案
       if (!top.length) {
         const empty = document.createElement("div");
         empty.className = "boardRow";
@@ -517,6 +507,7 @@
         boardList.appendChild(renderRow(i+1, item.name, item.score, isMe));
       });
 
+      // 自己不在 top10 -> 額外顯示自己的名次
       const me = await remoteFetchMe();
       if (me && typeof me.score === "number") {
         const inTop = top.some(x => x.uid === deviceUid);
@@ -582,9 +573,7 @@
   let dragStartAX = 0, dragStartAY = 0;
   let dragNowAX = 0, dragNowAY = 0;
 
-  function isMobileLayout() {
-    return window.matchMedia("(max-width: 600px)").matches;
-  }
+  function isMobileLayout() { return window.matchMedia("(max-width: 600px)").matches; }
 
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d', { alpha: false });
@@ -764,7 +753,6 @@
     applyLayout(computeLayout());
 
     currentTheme = THEMES[Math.floor(Math.random() * THEMES.length)];
-    restartBtn.style.backgroundColor = currentTheme.main;
 
     grid = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(0));
     score = 0;
@@ -935,9 +923,8 @@
   function checkAndClear() {
     const rs = [], cs = [];
 
-    for (let r = 0; r < GRID_SIZE; r++) {
-      if (grid[r].every(v => v === 1)) rs.push(r);
-    }
+    for (let r = 0; r < GRID_SIZE; r++) if (grid[r].every(v => v === 1)) rs.push(r);
+
     for (let c = 0; c < GRID_SIZE; c++) {
       let full = true;
       for (let r = 0; r < GRID_SIZE; r++) if (grid[r][c] === 0) full = false;
@@ -952,7 +939,6 @@
 
     const { base, multiLineBonus, comboBonus, gain } = calcGain(lines, currentComboCount);
     score += gain;
-
     document.getElementById('scoreDisplay').innerText = String(score);
 
     if (score > highScore) {
@@ -1028,10 +1014,7 @@
     const anchorCenterX = startX + (0 - bb.minC) * (block + gap) + block / 2;
     const anchorCenterY = startY + (0 - bb.minR) * (block + gap) + block / 2;
 
-    return {
-      x: anchorCenterX - CELL_SIZE * 0.5,
-      y: anchorCenterY - CELL_SIZE * 0.5
-    };
+    return { x: anchorCenterX - CELL_SIZE * 0.5, y: anchorCenterY - CELL_SIZE * 0.5 };
   }
 
   function findBestMagnet(shape, anchorX, anchorY) {
@@ -1043,8 +1026,8 @@
 
     let best = null;
 
-    for (let dr = -2; dr <= 2; dr++) {
-      for (let dc = -2; dc <= 2; dc++) {
+    for (let dr = -MAGNET_SEARCH_RADIUS; dr <= MAGNET_SEARCH_RADIUS; dr++) {
+      for (let dc = -MAGNET_SEARCH_RADIUS; dc <= MAGNET_SEARCH_RADIUS; dc++) {
         const r = baseR + dr;
         const c = baseC + dc;
         if (r < 0 || c < 0 || r >= GRID_SIZE || c >= GRID_SIZE) continue;
@@ -1057,9 +1040,7 @@
         const dy = (anchorY - snappedY) / CELL_SIZE;
         const distNorm = Math.hypot(dx, dy);
 
-        if (best === null || distNorm < best.distNorm) {
-          best = { r, c, snappedX, snappedY, distNorm };
-        }
+        if (best === null || distNorm < best.distNorm) best = { r, c, snappedX, snappedY, distNorm };
       }
     }
 
@@ -1100,12 +1081,10 @@
     bounceToY = home.y;
   }
 
+  // ✅ GAME OVER：跳排行榜 + 顯示「再玩一局 / 回到首頁」
   async function onGameOver() {
-    restartBtn.style.display = "none"; // overlay 會蓋住，這顆就不需要
     const name = getPlayerName();
-    if (name) {
-      try { await remoteUpsertBest(name, score); } catch (_) {}
-    }
+    if (name) { try { await remoteUpsertBest(name, score); } catch (_) {} }
     switchTab("board");
     showOverlay();
   }
@@ -1159,9 +1138,8 @@
       const best = findBestMagnet(shape, anchorX, anchorY);
 
       let r, c;
-      if (best.can) {
-        r = best.r; c = best.c;
-      } else {
+      if (best.can) { r = best.r; c = best.c; }
+      else {
         r = Math.floor((anchorY - layout.gridY) / CELL_SIZE);
         c = Math.floor((anchorX - layout.gridX) / CELL_SIZE);
       }
@@ -1173,11 +1151,9 @@
         for (const coord of shape) grid[r + coord[0]][c + coord[1]] = 1;
         hand[draggingIdx] = null;
 
+        // ✅ combo：放置成功但沒消 -> 清 combo；放置失敗不清
         const cleared = checkAndClear();
-        if (!cleared) {
-          currentComboCount = 0;
-          updateComboUI();
-        }
+        if (!cleared) { currentComboCount = 0; updateComboUI(); }
 
         if (hand.every(h => h === null)) refreshHand();
 
@@ -1192,10 +1168,7 @@
           }
           if (!dead) break;
         }
-        if (dead) {
-          gameOver = true;
-          onGameOver();
-        }
+        if (dead) { gameOver = true; onGameOver(); }
       } else {
         failFeedback();
         startBounceBack(draggingIdx, shape, anchorX, anchorY);
@@ -1281,10 +1254,7 @@
     ctx.restore();
 
     bounceLife -= 0.06;
-    if (bounceLife <= 0) {
-      bounceLife = 0;
-      bounceShape = null;
-    }
+    if (bounceLife <= 0) { bounceLife = 0; bounceShape = null; }
   }
 
   function animate() {
@@ -1298,28 +1268,27 @@
       if (shakeIntensity < 0.3) shakeIntensity = 0;
     }
 
+    // 背景格
     ctx.fillStyle = '#333';
-    for (let r = 0; r < GRID_SIZE; r++) {
-      for (let c = 0; c < GRID_SIZE; c++) {
-        const x = layout.gridX + c * CELL_SIZE + 2;
-        const y = layout.gridY + r * CELL_SIZE + 2;
-        ctx.fillRect(x, y, CELL_SIZE - 4, CELL_SIZE - 4);
-      }
+    for (let r = 0; r < GRID_SIZE; r++) for (let c = 0; c < GRID_SIZE; c++) {
+      const x = layout.gridX + c * CELL_SIZE + 2;
+      const y = layout.gridY + r * CELL_SIZE + 2;
+      ctx.fillRect(x, y, CELL_SIZE - 4, CELL_SIZE - 4);
     }
 
     if (currentTheme) {
-      for (let r = 0; r < GRID_SIZE; r++) {
-        for (let c = 0; c < GRID_SIZE; c++) {
-          if (grid[r][c]) {
-            const x = layout.gridX + c * CELL_SIZE + 2;
-            const y = layout.gridY + r * CELL_SIZE + 2;
-            drawBlock(x, y, CELL_SIZE - 4, 8, currentTheme, 1);
-          }
+      // 已放方塊
+      for (let r = 0; r < GRID_SIZE; r++) for (let c = 0; c < GRID_SIZE; c++) {
+        if (grid[r][c]) {
+          const x = layout.gridX + c * CELL_SIZE + 2;
+          const y = layout.gridY + r * CELL_SIZE + 2;
+          drawBlock(x, y, CELL_SIZE - 4, 8, currentTheme, 1);
         }
       }
 
       updateAndDrawLineFlashes();
 
+      // 拖曳 preview + 本體
       if (draggingIdx !== null && hand[draggingIdx]) {
         const shape = hand[draggingIdx];
         const anchorX = dragNowAX;
@@ -1363,9 +1332,10 @@
       updateAndDrawFloatingTexts();
     }
 
+    // 失敗紅色 overlay（透明度可調）
     if (failOverlayLife > 0) {
       ctx.save();
-      ctx.globalAlpha = 0.30 * failOverlayLife; // ← 調整紅色透明度在這
+      ctx.globalAlpha = 0.30 * failOverlayLife; // ← 想更淡就改 0.30
       ctx.fillStyle = "rgba(255, 60, 60, 1)";
       ctx.fillRect(layout.gridX, layout.gridY, GRID_SIZE * CELL_SIZE, GRID_SIZE * CELL_SIZE);
       ctx.restore();
@@ -1373,29 +1343,11 @@
       if (failOverlayLife < 0) failOverlayLife = 0;
     }
 
-    if (gameOver) {
-      ctx.fillStyle = "rgba(0,0,0,0.65)";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = "white";
-      ctx.font = "40px Arial";
-      ctx.textAlign = "center";
-      ctx.fillText("GAME OVER", canvas.width / 2, canvas.height / 2 - 10);
-      // restartBtn 由 overlay 的「再玩一次」取代
-    }
-
     ctx.restore();
     requestAnimationFrame(animate);
   }
 
-  function handleResize() {
-    const newLayout = computeLayout();
-    applyLayout(newLayout);
-  }
-  window.addEventListener('resize', handleResize);
-
-  restartBtn.addEventListener("click", () => {
-    resetGame();
-  });
+  window.addEventListener('resize', () => applyLayout(computeLayout()));
 
   // ===== Boot =====
   (function boot() {
@@ -1408,7 +1360,6 @@
 
     showOverlay();
     switchTab("login");
-
     animate();
   })();
 </script>

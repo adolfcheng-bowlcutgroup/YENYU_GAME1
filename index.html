@@ -2,7 +2,8 @@
 <html lang="zh-Hant">
 <head>
     <meta charset="UTF-8">
-    <title>9x9 拼圖消消樂 - T型加入版</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>9x9 拼圖消消樂 - 全平台版</title>
     <style>
         body {
             background-color: #1a1a1a;
@@ -15,27 +16,33 @@
             height: 100vh;
             justify-content: center;
             overflow: hidden;
+            /* 防止手機拉動頁面 */
+            touch-action: none; 
         }
         .header {
-            width: 750px;
+            width: 95%;
+            max-width: 750px;
             display: flex;
             justify-content: center;
             align-items: flex-end;
             position: relative;
-            margin-bottom: 15px;
+            margin-bottom: 10px;
         }
         #highScoreContainer {
             position: absolute; left: 0; bottom: 5px;
             background: rgba(255, 255, 255, 0.1);
-            padding: 5px 15px; border-radius: 5px; border-left: 4px solid #FFD700;
+            padding: 5px 10px; border-radius: 5px; border-left: 4px solid #FFD700;
         }
         #scoreDisplay {
-            font-size: 80px; font-weight: bold; font-family: 'Arial Black', sans-serif;
+            font-size: 60px; font-weight: bold; font-family: 'Arial Black', sans-serif;
         }
         canvas {
             background-color: #222;
             border-radius: 12px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+            max-width: 100%;
+            height: auto;
+            touch-action: none;
         }
         #restartBtn {
             display: none;
@@ -51,13 +58,13 @@
 
 <div class="header">
     <div id="highScoreContainer">
-        <div style="font-size:12px;color:#aaa;">BEST</div>
+        <div style="font-size:10px;color:#aaa;">BEST</div>
         <div id="highScore">0</div>
     </div>
     <div id="scoreDisplay">0</div>
 </div>
 
-<div style="position: relative;">
+<div style="position: relative; width: 100%; display: flex; justify-content: center;">
     <canvas id="gameCanvas"></canvas>
     <button id="restartBtn" onclick="resetGame()">PLAY AGAIN</button>
 </div>
@@ -91,20 +98,11 @@ const SHAPE_DEFS = [
     { shape: [[0,0], [1,0], [2,0], [3,0]], weight: 10 },
     { shape: [[0,0], [1,0], [1,1], [2,1]], weight: 10 },
     { shape: [[0,1], [0,2], [1,0], [1,1]], weight: 10 },
-    { shape: [[0,0], [1,0], [2,0], [2,1]], weight: 10 },
-    { shape: [[0,1], [1,1], [2,1], [2,0]], weight: 10 },
-    { shape: [[0,0], [0,1], [0,2], [1,0]], weight: 10 },
-    
-    // --- 新增短 T 系列 (權重 10) ---
-    { shape: [[0,1], [1,0], [1,1], [1,2]], weight: 10 }, // 正 T
-    { shape: [[0,0], [0,1], [0,2], [1,1]], weight: 10 }, // 倒 T
-    { shape: [[0,0], [1,0], [2,0], [1,1]], weight: 10 }, // 右 T
-    { shape: [[0,1], [1,1], [2,1], [1,0]], weight: 10 }, // 左 T
-
-    // --- 特殊方塊 (權重 3) ---
-    { shape: [[0,0], [0,1], [0,2], [1,0], [2,0]], weight: 3 }, // 大 L
+    { shape: [[0,1], [1,0], [1,1], [1,2]], weight: 10 }, // T
+    { shape: [[0,0], [1,0], [2,0], [2,1]], weight: 10 }, // L
+    { shape: [[0,0], [0,1], [0,2], [1,0], [2,0]], weight: 3 }, // 大L
     { shape: [[0,1], [1,0], [1,1], [1,2], [2,1]], weight: 3 }, // 十字
-    { shape: [[0,0], [0,1], [0,2], [1,0], [1,1], [1,2], [2,0], [2,1], [2,2]], weight: 3 } // 大田
+    { shape: [[0,0], [0,1], [0,2], [1,0], [1,1], [1,2], [2,0], [2,1], [2,2]], weight: 3 }
 ];
 
 let currentTheme, grid, hand, score, highScore, draggingIdx, mouseX, mouseY, gameOver;
@@ -133,22 +131,7 @@ function drawBlock(x, y, size, r, theme, alpha = 1.0) {
     g.addColorStop(1, theme.dark);
     ctx.fillStyle = g;
     ctx.fill();
-    ctx.fillStyle = "rgba(255,255,255,0.2)";
-    ctx.beginPath();
-    ctx.arc(x + size*0.3, y + size*0.3, size*0.15, 0, Math.PI*2);
-    ctx.fill();
     ctx.restore();
-}
-
-function spawnExplosion(x, y) {
-    for (let i = 0; i < 8; i++) {
-        particles.push({
-            x: x, y: y,
-            vx: (Math.random() - 0.5) * 12,
-            vy: (Math.random() - 0.5) * 12 - 3,
-            life: 1.0, size: Math.random() * 6 + 4
-        });
-    }
 }
 
 function resetGame() {
@@ -182,8 +165,7 @@ function refreshHand() {
 function canPlace(shape, r, c) {
     if (!shape || r < 0 || c < 0) return false;
     for (let i = 0; i < shape.length; i++) {
-        let nr = r + shape[i][0];
-        let nc = c + shape[i][1];
+        let nr = r + shape[i][0], nc = c + shape[i][1];
         if (nr >= GRID_SIZE || nc >= GRID_SIZE || grid[nr][nc] === 1) return false;
     }
     return true;
@@ -197,50 +179,35 @@ function checkAndClear() {
         for(let r=0; r<GRID_SIZE; r++) if(grid[r][c] === 0) full = false;
         if(full) cs.push(c);
     }
-    
     if(rs.length + cs.length > 0) {
         currentComboCount++;
         let lines = rs.length + cs.length;
         let gain = (lines * GRID_SIZE) + (lines - 1) * 5 + (currentComboCount * 5);
-        updateScore(gain);
+        score += gain;
+        document.getElementById('scoreDisplay').innerText = score;
+        if(score > highScore) { highScore = score; localStorage.setItem('blockHighScore', score); document.getElementById('highScore').innerText = score; }
         shakeIntensity = lines * 8;
         let praise = ["", "Good！", "Nice Play！", "Great！", "Perfect！", "GOD LIKE！"][Math.min(currentComboCount, 5)];
         floatingTexts.push({txt: praise, x: (GRID_SIZE*CELL_SIZE)/2, y: (GRID_SIZE*CELL_SIZE)/2-30, life:1, size:25+currentComboCount*5});
-        
-        rs.forEach(r => { for(let c=0; c<GRID_SIZE; c++) { spawnExplosion(c*CELL_SIZE+CELL_SIZE/2, r*CELL_SIZE+CELL_SIZE/2); grid[r][c]=0; }});
-        cs.forEach(c => { for(let r=0; r<GRID_SIZE; r++) { spawnExplosion(c*CELL_SIZE+CELL_SIZE/2, r*CELL_SIZE+CELL_SIZE/2); grid[r][c]=0; }});
-    } else {
-        currentComboCount = 0;
-    }
-}
-
-function updateScore(gain) {
-    score += gain;
-    document.getElementById('scoreDisplay').innerText = score;
-    if(score > highScore) { 
-        highScore = score; localStorage.setItem('blockHighScore', score);
-        document.getElementById('highScore').innerText = score;
-    }
+        rs.forEach(r => { for(let c=0; c<GRID_SIZE; c++) grid[r][c]=0; });
+        cs.forEach(c => { for(let r=0; r<GRID_SIZE; r++) grid[r][c]=0; });
+    } else { currentComboCount = 0; }
 }
 
 function animate() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.save();
     if(shakeIntensity > 0) { ctx.translate((Math.random()-0.5)*shakeIntensity, (Math.random()-0.5)*shakeIntensity); shakeIntensity *= 0.8; }
-
+    
     ctx.fillStyle = '#333';
-    for(let r=0; r<GRID_SIZE; r++) for(let c=0; c<GRID_SIZE; c++) {
-        ctx.fillRect(c*CELL_SIZE + 2, r*CELL_SIZE + 2, CELL_SIZE-4, CELL_SIZE-4);
-    }
-
-    for(let r=0; r<GRID_SIZE; r++) for(let c=0; c<GRID_SIZE; c++) {
-        if(grid[r][c]) drawBlock(c*CELL_SIZE + 2, r*CELL_SIZE + 2, CELL_SIZE-4, 8, currentTheme);
-    }
+    for(let r=0; r<GRID_SIZE; r++) for(let c=0; c<GRID_SIZE; c++) ctx.fillRect(c*CELL_SIZE+2, r*CELL_SIZE+2, CELL_SIZE-4, CELL_SIZE-4);
+    
+    for(let r=0; r<GRID_SIZE; r++) for(let c=0; c<GRID_SIZE; c++) if(grid[r][c]) drawBlock(c*CELL_SIZE+2, r*CELL_SIZE+2, CELL_SIZE-4, 8, currentTheme);
 
     if(draggingIdx !== null && hand[draggingIdx]) {
         let r = Math.round((mouseY-25)/CELL_SIZE), c = Math.round((mouseX-25)/CELL_SIZE);
         if(canPlace(hand[draggingIdx], r, c)) {
-            for(let coord of hand[draggingIdx]) drawBlock((c+coord[1])*CELL_SIZE + 2, (r+coord[0])*CELL_SIZE + 2, CELL_SIZE-4, 8, currentTheme, 0.3);
+            for(let coord of hand[draggingIdx]) drawBlock((c+coord[1])*CELL_SIZE+2, (r+coord[0])*CELL_SIZE+2, CELL_SIZE-4, 8, currentTheme, 0.3);
         }
     }
 
@@ -253,12 +220,6 @@ function animate() {
     if(draggingIdx !== null && hand[draggingIdx]) {
         for(let coord of hand[draggingIdx]) drawBlock(mouseX + coord[1]*CELL_SIZE-25, mouseY + coord[0]*CELL_SIZE-25, CELL_SIZE-4, 8, currentTheme);
     }
-
-    particles.forEach((p, i) => {
-        p.x += p.vx; p.y += p.vy; p.vy += 0.4; p.life -= 0.02;
-        if (p.life <= 0) particles.splice(i, 1);
-        else { ctx.save(); ctx.globalAlpha = p.life; ctx.fillStyle = currentTheme.main; ctx.fillRect(p.x, p.y, p.size, p.size); ctx.restore(); }
-    });
 
     floatingTexts.forEach((t, i) => {
         t.y -= 1; t.life -= 0.02;
@@ -277,20 +238,20 @@ function animate() {
     requestAnimationFrame(animate);
 }
 
-canvas.addEventListener('mousedown', e => {
+/** 核心修正：統一輸入事件 **/
+function handleInputStart(x, y) {
     if(gameOver) return;
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left, y = e.clientY - rect.top;
     if(x > GRID_SIZE * CELL_SIZE) {
         let idx = Math.floor((y - 40) / 150);
         if(idx >= 0 && idx < 3 && hand[idx]) draggingIdx = idx;
     }
-});
-window.addEventListener('mousemove', e => {
-    const rect = canvas.getBoundingClientRect();
-    mouseX = e.clientX - rect.left; mouseY = e.clientY - rect.top;
-});
-window.addEventListener('mouseup', () => {
+}
+
+function handleInputMove(x, y) {
+    mouseX = x; mouseY = y;
+}
+
+function handleInputEnd() {
     if(draggingIdx !== null) {
         let r = Math.round((mouseY-25)/CELL_SIZE), c = Math.round((mouseX-25)/CELL_SIZE);
         if(canPlace(hand[draggingIdx], r, c)) {
@@ -299,18 +260,43 @@ window.addEventListener('mouseup', () => {
             checkAndClear();
             if(hand.every(h => h === null)) refreshHand();
             let dead = true;
-            for(let s of hand) {
-                if(!s) continue;
-                for(let i=0; i<GRID_SIZE; i++) {
-                    for(let j=0; j<GRID_SIZE; j++) if(canPlace(s, i, j)) { dead = false; break; }
-                    if(!dead) break;
-                }
-            }
+            for(let s of hand) { if(!s) continue; for(let i=0; i<GRID_SIZE; i++) for(let j=0; j<GRID_SIZE; j++) if(canPlace(s, i, j)) dead = false; }
             if(dead) gameOver = true;
         }
         draggingIdx = null;
     }
+}
+
+// 滑鼠事件
+canvas.addEventListener('mousedown', e => {
+    const rect = canvas.getBoundingClientRect();
+    handleInputStart(e.clientX - rect.left, e.clientY - rect.top);
 });
+window.addEventListener('mousemove', e => {
+    const rect = canvas.getBoundingClientRect();
+    handleInputMove(e.clientX - rect.left, e.clientY - rect.top);
+});
+window.addEventListener('mouseup', handleInputEnd);
+
+// 觸控事件
+canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const touch = e.touches[0];
+    handleInputStart(touch.clientX - rect.left, touch.clientY - rect.top);
+}, {passive: false});
+
+canvas.addEventListener('touchmove', e => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const touch = e.touches[0];
+    handleInputMove(touch.clientX - rect.left, touch.clientY - rect.top);
+}, {passive: false});
+
+canvas.addEventListener('touchend', e => {
+    e.preventDefault();
+    handleInputEnd();
+}, {passive: false});
 
 resetGame();
 animate();

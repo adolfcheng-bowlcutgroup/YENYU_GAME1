@@ -378,27 +378,27 @@
 
         <div id="viewBoard" style="display:none;">
           <!-- ✅ GAME OVER 大字顯示 -->
-        <div id="gameOverPanel" style="display:none; margin-bottom:12px;">
-          <div id="goTitle" style="
-            font-weight:1000;
-            font-size:34px;
-            letter-spacing:1px;
-            text-align:center;
-            margin:2px 0 10px;
-          ">結束了我的朋友</div>
+          <div id="gameOverPanel" style="display:none; margin-bottom:12px;">
+            <div id="goTitle" style="
+              font-weight:1000;
+              font-size:34px;
+              letter-spacing:1px;
+              text-align:center;
+              margin:2px 0 10px;
+            ">結束了我的朋友</div>
 
-          <div class="goStats">
-            <div class="goCard">
-              <div class="goLabel">本局得分</div>
-              <div id="goScore" class="goValue">0分</div>
-            </div>
+            <div class="goStats">
+              <div class="goCard">
+                <div class="goLabel">本局得分</div>
+                <div id="goScore" class="goValue">0分</div>
+              </div>
 
-            <div class="goCard">
-              <div class="goLabel">本局最高 COMBO</div>
-              <div id="goCombo" class="goValue">x0</div>
+              <div class="goCard">
+                <div class="goLabel">本局最高 COMBO</div>
+                <div id="goCombo" class="goValue">x0</div>
+              </div>
             </div>
           </div>
-        </div>
 
           <div class="actions" style="margin-top:0;">
             <button id="btnBackToLogin" class="btn btnGhost">回到首頁</button>
@@ -476,27 +476,57 @@
 
   // 每台裝置固定一個 uid（避免同名互相覆蓋）
   const LS_UID_KEY = "blockDeviceUidV1";
+  let deviceUidMem = "";
+
   function getOrCreateDeviceUid() {
-    let uid = localStorage.getItem(LS_UID_KEY);
-    if (!uid) {
-      uid = (crypto?.randomUUID?.() || ("uid_" + Math.random().toString(16).slice(2) + Date.now()));
-      localStorage.setItem(LS_UID_KEY, uid);
+    // 1) 先嘗試 localStorage
+    try {
+      const fromLS = (localStorage.getItem(LS_UID_KEY) || "").trim();
+      if (fromLS) return fromLS;
+    } catch (e) {
+      console.warn("[LS] get uid failed:", e);
     }
+
+    // 2) 再用 memory（同一頁面內穩定）
+    if (deviceUidMem) return deviceUidMem;
+
+    // 3) 生成一個新的
+    const uid =
+      (crypto?.randomUUID?.() ||
+        ("uid_" + Math.random().toString(16).slice(2) + Date.now()));
+
+    deviceUidMem = uid;
+
+    // 4) 嘗試寫回 localStorage（失敗也沒關係）
+    try {
+      localStorage.setItem(LS_UID_KEY, uid);
+    } catch (e) {
+      console.warn("[LS] set uid failed:", e);
+    }
+
     return uid;
   }
-  const deviceUid = getOrCreateDeviceUid();
+
+const deviceUid = getOrCreateDeviceUid();
 
   // ✅ 上傳：score / bestCombo 都採「只增不減」
-  async function remoteUpsertBest(name, score, bestCombo, hCombo) {
+    async function remoteUpsertBest(name, score, bestCombo, hCombo) {
     name = (name || "").trim().slice(0, 16);
     if (!name) return;
 
     const ref = doc(db, LEADERBOARD_COL, deviceUid);
     const snap = await getDoc(ref);
 
-    const prevScore = snap.exists() ? Number(snap.data().score || 0) : 0;
-    const prevBestCombo = snap.exists() ? Number(snap.data().bestCombo || 0) : 0;
-    const prevHCombo = snap.exists() ? Number(snap.data().hCombo || 0) : 0;
+    // ✅ NaN/奇怪舊值一律當 0
+    const prevScoreRaw = snap.exists() ? snap.data().score : 0;
+    const prevBestComboRaw = snap.exists() ? snap.data().bestCombo : 0;
+
+    const prevScore = Number.isFinite(Number(prevScoreRaw)) ? Number(prevScoreRaw) : 0;
+    const prevBestCombo = Number.isFinite(Number(prevBestComboRaw)) ? Number(prevBestComboRaw) : 0;
+
+    const scoreN = Number(score);
+    const hComboN = Number(hCombo);
+    const bestComboN = Number(bestCombo);
 
     const next = {
       uid: deviceUid,
@@ -504,47 +534,86 @@
       updatedAt: serverTimestamp()
     };
 
-    // ✅ 1) 歷史最高 combo：只增不減（跟分數無關）
-    if (typeof bestCombo === "number" && bestCombo > prevBestCombo) {
-      next.bestCombo = bestCombo;
+    const isNewDoc = !snap.exists();
+
+    // ✅ 新文件：直接寫入（避免 0 分或其他狀況沒寫到）
+    if (isNewDoc) {
+      if (Number.isFinite(scoreN)) next.score = scoreN;
+      if (Number.isFinite(hComboN)) next.hCombo = hComboN;
+      if (Number.isFinite(bestComboN)) next.bestCombo = bestComboN;
+      await setDoc(ref, next, { merge: true });
+      return;
     }
 
-    // ✅ 2) 最高分：只在更高分才更新 score
-    //    並且讓 hCombo 跟著「最高分那局」一起更新
-    if (typeof score === "number" && score > prevScore) {
-      next.score = score;
+    // 1) 歷史最高 combo：只增不減
+    if (Number.isFinite(bestComboN) && bestComboN > prevBestCombo) {
+      next.bestCombo = bestComboN;
+    }
 
-      // 這局的最高 combo，跟著最高分一起紀錄
-      if (typeof hCombo === "number") {
-        next.hCombo = hCombo;
-      } else {
-        next.hCombo = prevHCombo; // 保底
-      }
-    } else {
-      // 分數沒破紀錄：hCombo 不要動（避免低分局覆蓋）
-      // next.hCombo 不填
+    // 2) 最高分：只在更高分才更新 score + 該局 hCombo
+    if (Number.isFinite(scoreN) && scoreN > prevScore) {
+      next.score = scoreN;
+      if (Number.isFinite(hComboN)) next.hCombo = hComboN;
     }
 
     await setDoc(ref, next, { merge: true });
   }
 
 
+  // ✅ 不用複合索引版本：只 orderBy(score)，同分 tie-break 前端處理
   async function remoteFetchTop(topN = 12) {
-    const q = query(collection(db, LEADERBOARD_COL), orderBy("score", "desc"), limit(topN));
+    const q = query(
+      collection(db, LEADERBOARD_COL),
+      orderBy("score", "desc"),
+      limit(topN)
+    );
+
     const snap = await getDocs(q);
-    return snap.docs.map(d => d.data());
+
+    // 先把資料取出並標準化型別
+    const arr = snap.docs.map(d => {
+      const x = d.data() || {};
+      return {
+        uid: x.uid,
+        name: x.name,
+        score: Number(x.score ?? 0),
+        hCombo: Number(x.hCombo ?? 0),
+        bestCombo: Number(x.bestCombo ?? 0),
+        updatedAt: x.updatedAt // Firestore Timestamp or undefined
+      };
+    });
+
+    // 過濾掉 score 不可用的奇怪舊資料（避免排序/顯示爆炸）
+    const cleaned = arr.filter(x => Number.isFinite(x.score));
+
+    // 同分再比 updatedAt（沒有就當 0）
+    cleaned.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+
+      const ta = a.updatedAt?.seconds ? a.updatedAt.seconds : 0;
+      const tb = b.updatedAt?.seconds ? b.updatedAt.seconds : 0;
+
+      // 你原本是 asc（越早更新越前面），這裡保持一致
+      return ta - tb;
+    });
+
+    return cleaned.slice(0, topN);
   }
 
+  // ✅ 保留原本：抓自己
   async function remoteFetchMe() {
     const ref = doc(db, LEADERBOARD_COL, deviceUid);
     const snap = await getDoc(ref);
     return snap.exists() ? snap.data() : null;
   }
 
+  // ✅ 保留原本：算名次（聚合 count）
   async function remoteComputeMyRank(myScore) {
-    if (typeof myScore !== "number") return null;
+    const scoreN = Number(myScore);
+    if (!Number.isFinite(scoreN)) return null;
+
     const col = collection(db, LEADERBOARD_COL);
-    const q = query(col, where("score", ">", myScore));
+    const q = query(col, where("score", ">", scoreN));
     const agg = await getCountFromServer(q);
     const higher = agg.data().count || 0;
     return higher + 1;
@@ -554,8 +623,28 @@
    *  Overlay UI
    * ========================================================= */
   const LS_NAME_KEY = "blockPlayerName";
-  function getPlayerName() { return (localStorage.getItem(LS_NAME_KEY) || "").trim(); }
-  function setPlayerName(name) { localStorage.setItem(LS_NAME_KEY, name.trim()); }
+  let playerNameMem = "";
+  function getPlayerName() {
+    // 1) 先 try localStorage
+    try {
+      const ls = (localStorage.getItem(LS_NAME_KEY) || "").trim();
+      if (ls) return ls;
+    } catch (e) {
+      console.warn("[LS] get name failed:", e);
+    }
+
+    // 2) fallback 用 memory（同頁面內穩定）
+    return (playerNameMem || "").trim();
+  }
+
+  function setPlayerName(name) {
+  playerNameMem = (name || "").trim();
+  try {
+    localStorage.setItem(LS_NAME_KEY, playerNameMem);
+  } catch (e) {
+    console.warn("[LS] set name failed:", e);
+  }
+}
 
   const overlay = document.getElementById("overlay");
   const tabLogin = document.getElementById("tabLogin");
@@ -652,18 +741,16 @@
     const s = Number(score || 0);
     const hc = Number(hCombo || 0);
 
-  div.innerHTML = `
-    <div class="rankPill" style="background:${pillBg};border-color:${pillBd}">${rank}</div>
-    <div class="nameCell" title="${escapeHtml(name || "-")}">
-      ${escapeHtml(name || "-")}${isMe ? ' <span class="muted">(你)</span>' : ""}
-    </div>
-    <div class="right">${s.toLocaleString()}</div>
-    <div class="right">x${hc}</div>
-  `;
+    div.innerHTML = `
+      <div class="rankPill" style="background:${pillBg};border-color:${pillBd}">${rank}</div>
+      <div class="nameCell" title="${escapeHtml(name || "-")}">
+        ${escapeHtml(name || "-")}${isMe ? ' <span class="muted">(你)</span>' : ""}
+      </div>
+      <div class="right">${s.toLocaleString()}</div>
+      <div class="right">x${hc}</div>
+    `;
     return div;
   }
-
-
 
   async function refreshBoardUI() {
     boardStatus.textContent = "讀取中...";
@@ -673,7 +760,7 @@
     moreBoard.style.display = "none";
 
     try {
-      // ✅ 改為抓 12 筆：前 6 顯示，後 6 摺疊
+      // ✅ 抓 12 筆：前 6 顯示，後 6 摺疊
       const top = await withTimeout(remoteFetchTop(12), 3500, "Firestore read timeout");
 
       if (!top.length) {
@@ -685,20 +772,19 @@
           <div class="right muted">-</div>
           <div class="right muted">-</div>
         `;
-
         boardList.appendChild(empty);
         boardStatus.textContent = "目前榜單為空。先玩一局產生資料～";
         return;
       }
 
+      // ✅ 渲染前 6 + 後 6（折疊）
       top.forEach((item, i) => {
         const isMe = (item.uid === deviceUid);
-        const row = renderRow(i+1, item.name, item.score, item.hCombo, isMe);
+        const row = renderRow(i + 1, item.name, item.score, item.hCombo, isMe);
 
         if (i < 6) boardList.appendChild(row);
         else boardListMore.appendChild(row);
       });
-
 
       if (top.length > 6) {
         moreBoard.style.display = "block";
@@ -706,33 +792,42 @@
         if (summarySpan) summarySpan.textContent = `(點我展開，共 ${top.length - 6} 筆)`;
       }
 
+      // ✅ 我的資料
       const me = await withTimeout(remoteFetchMe(), 3500, "Firestore me timeout");
-      if (me && typeof me.score === "number") {
+
+      // ✅ 若我不在 Top12，顯示我的名次（用 count 聚合算）
+      if (me && Number.isFinite(Number(me.score))) {
+        const myScore = Number(me.score);
         const inTop = top.some(x => x.uid === deviceUid);
+
         if (!inTop) {
           const sep = document.createElement("div");
           sep.className = "sep";
-          // 分隔線插在「前 6」與折疊區之間會怪，所以插在前 6 的尾端
           boardList.appendChild(sep);
 
-          const myRank = await withTimeout(remoteComputeMyRank(me.score), 3500, "Firestore rank timeout");
+          const myRank = await withTimeout(remoteComputeMyRank(myScore), 3500, "Firestore rank timeout");
           if (myRank != null) {
-            boardList.appendChild(renderRow(myRank, me.name, me.score, me.hCombo, true));
-
+            boardList.appendChild(renderRow(myRank, me.name, myScore, me.hCombo, true));
           }
         }
       }
 
-      // ✅ 顯示「使用者最高 COMBO」
-      const me2 = await withTimeout(remoteFetchMe(), 3500, "Firestore me timeout 2");
-      if (me2 && typeof me2.bestCombo === "number") {
-        boardStatus.textContent = `你的最高 COMBO：x${me2.bestCombo}`;
+      // ✅ 顯示「你的最高 COMBO」：優先用遠端 bestCombo，沒有就用本機 bestComboLocal
+      const bestComboRemote = (me && Number.isFinite(Number(me.bestCombo))) ? Number(me.bestCombo) : null;
+      if (bestComboRemote != null) {
+        boardStatus.textContent = `你的最高 COMBO：x${bestComboRemote}`;
       } else {
         boardStatus.textContent = `你的最高 COMBO：x${bestComboLocal}`;
       }
+
     } catch (e) {
       console.error("Leaderboard error:", e);
-      boardStatus.textContent = "排行榜讀取失敗。請開 Console 看錯誤訊息。";
+
+      // ✅ 直接把錯誤碼顯示出來
+      const code = e?.code ? String(e.code) : "";
+      const msg = e?.message ? String(e.message) : String(e || "");
+      boardStatus.textContent = `排行榜讀取失敗：${code} ${msg}`.trim();
+
       const err = document.createElement("div");
       err.className = "boardRow";
       err.innerHTML = `
@@ -1061,8 +1156,6 @@
     ctx.restore();
   }
 
-
-
   function resetGame() {
     applyLayout(computeLayout());
 
@@ -1145,7 +1238,7 @@
     }
   }
 
-    // ✅ 成功放置：粒子 + 擴散圈 + 小浮字（新增）
+  // ✅ 成功放置：粒子 + 擴散圈 + 小浮字（新增）
   function spawnPlaceParticles(cells) {
     // 每格少量粒子
     for (const {r, c} of cells) {
@@ -1576,8 +1669,16 @@
     // 背景處理：上傳 + 刷新排行榜（都有 timeout 保護）
     (async () => {
       try {
-        await withTimeout(remoteUpsertBest(name, score, bestComboLocal, maxComboThisRun), 3500, "Firestore write timeout");
-        boardStatus.textContent = "分數已上傳，排行榜更新中...";
+        await withTimeout(
+          remoteUpsertBest(name, score, bestComboLocal, maxComboThisRun),
+          8000,
+          "Firestore write timeout"
+        );
+
+        const meAfter = await withTimeout(remoteFetchMe(), 3500, "Firestore me after write timeout");
+        console.log("[ME AFTER WRITE]", meAfter);
+
+        boardStatus.textContent = `上傳完成：遠端分數=${meAfter?.score ?? "?"}`;
         await refreshBoardUI();
       } catch (e) {
         console.error("[LB] upsert/refresh FAILED:", e);
@@ -1619,7 +1720,6 @@
     }
   }
 
-
   function handlePointerMove(e) {
     // ✅ Overlay 開著時，不追蹤 pointer（避免吃掉滑動）
     if (isOverlayOpen()) return;
@@ -1638,7 +1738,6 @@
       dragNowAY = dragStartAY + dy;
     }
   }
-
 
   function handlePointerUpOrCancel() {
     // ✅ Overlay 開著時，不處理放下（避免干擾排行榜）
@@ -1715,7 +1814,6 @@
 
     draggingIdx = null;
   }
-
 
   canvas.addEventListener('pointerdown', handlePointerDown);
   window.addEventListener('pointermove', handlePointerMove);
@@ -1921,11 +2019,7 @@
     requestAnimationFrame(animate);
   }
 
-  // ✅ 注意：這行不要放在 animate() 外面（你原本那行要刪掉）
-  // requestAnimationFrame(animate);
-
   window.addEventListener('resize', () => applyLayout(computeLayout()));
-
 
   // ===== Boot =====
   (function boot() {

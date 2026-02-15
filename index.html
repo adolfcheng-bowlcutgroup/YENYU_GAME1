@@ -79,7 +79,12 @@
       justify-content: center;
       z-index: 9999;
       padding: 20px;
+
+      overflow-y: auto;                 /* ✅ 讓 overlay 本身可往下滑 */
+      -webkit-overflow-scrolling: touch;/* ✅ iOS 慣性滑動 */
+      touch-action: pan-y;
     }
+
 
     #viewLogin, #viewBoard{
       flex: 1;
@@ -87,10 +92,16 @@
     }
 
     #viewBoard{
-      overflow: hidden;
-      display: flex;
-      flex-direction: column;
+      display:flex;
+      flex-direction:column;
+      flex: 1;
+      min-height: 0;
+
+      overflow-y: auto;                 /* ✅ 讓整個排行榜頁可滾 */
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
     }
+
 
     .panel{
       width:min(580px, 95vw);
@@ -98,11 +109,16 @@
       border: 1px solid rgba(255,255,255,0.10);
       border-radius: 18px;
       box-shadow: 0 20px 80px rgba(0,0,0,0.6);
+
       overflow: hidden;
-      max-height: min(86vh, 720px);
+
+      max-height: min(86dvh, 720px);   /* ✅ 用 dvh，iOS 更穩 */
+      height: auto;                    /* ✅ 交給內容撐 */
       display: flex;
       flex-direction: column;
+      min-height: 0;
     }
+
     .panelHead{
       padding: 16px 18px;
       display:flex;
@@ -118,11 +134,14 @@
     }
     .panelBody{
       padding: 16px 18px 18px;
-      overflow: hidden;   /* 重要：讓裡面可捲動區生效 */
+      overflow-y: auto;                 /* ✅ 讓內容可以捲 */
+      -webkit-overflow-scrolling: touch;
       display: flex;
       flex-direction: column;
+      flex: 1;
       min-height: 0;
     }
+
 
     .tabs{
       display:flex; gap:10px;
@@ -203,9 +222,9 @@
       border: 1px solid rgba(255,255,255,0.10);
       border-radius: 14px;
       background: rgba(255,255,255,0.04);
-      flex: 1;
+      flex: 0 0 auto;
       min-height: 0;
-      overflow: auto;
+      overflow-y: auto;  /* ✅ 明確指定 y 滾動 */
       -webkit-overflow-scrolling: touch;
       touch-action: pan-y;
     }
@@ -1312,7 +1331,7 @@
 
   function calcGain(lines, comboCount) {
     const base = lines * 10;
-    const multiLineBonus = Math.max(0, lines - 1) * 16;
+    const multiLineBonus = (lines - 1) * 25;
     const baseTotal = base + multiLineBonus;
 
     const multiplier = Math.max(1, comboCount);
@@ -1568,12 +1587,21 @@
     })();
   }
 
+  function isOverlayOpen(){
+    // overlay 顯示時 = 正在開啟（display:flex）
+    return overlay && overlay.style.display !== "none";
+  }
+
   function handlePointerDown(e) {
+    // ✅ Overlay 開著時，不處理任何遊戲拖曳
+    if (isOverlayOpen()) return;
     if (gameOver) return;
+
     canvas.setPointerCapture?.(e.pointerId);
 
     const pos = getCanvasPosFromClient(e.clientX, e.clientY);
-    pointerX = pos.x; pointerY = pos.y;
+    pointerX = pos.x;
+    pointerY = pos.y;
 
     const idx = pickHandIndex(pos);
     if (idx !== null) {
@@ -1591,12 +1619,17 @@
     }
   }
 
+
   function handlePointerMove(e) {
+    // ✅ Overlay 開著時，不追蹤 pointer（避免吃掉滑動）
+    if (isOverlayOpen()) return;
+
     const events = (e.getCoalescedEvents && e.getCoalescedEvents()) || null;
     const last = events && events.length ? events[events.length - 1] : e;
 
     const pos = getCanvasPosFromClient(last.clientX, last.clientY);
-    pointerX = pos.x; pointerY = pos.y;
+    pointerX = pos.x;
+    pointerY = pos.y;
 
     if (draggingIdx !== null) {
       const dx = (pointerX - dragStartPX) * DRAG_GAIN;
@@ -1606,7 +1639,13 @@
     }
   }
 
+
   function handlePointerUpOrCancel() {
+    // ✅ Overlay 開著時，不處理放下（避免干擾排行榜）
+    if (isOverlayOpen()) {
+      draggingIdx = null;
+      return;
+    }
     if (draggingIdx === null) return;
 
     const shape = hand[draggingIdx];
@@ -1617,8 +1656,10 @@
       const best = findBestMagnet(shape, anchorX, anchorY);
 
       let r, c;
-      if (best.can) { r = best.r; c = best.c; }
-      else {
+      if (best.can) {
+        r = best.r;
+        c = best.c;
+      } else {
         r = Math.floor((anchorY - layout.gridY) / CELL_SIZE);
         c = Math.floor((anchorX - layout.gridX) / CELL_SIZE);
       }
@@ -1627,17 +1668,24 @@
       c = Math.max(0, Math.min(GRID_SIZE - 1, c));
 
       if (canPlace(shape, r, c)) {
-        for (const coord of shape) grid[r + coord[0]][c + coord[1]] = 1;
+        for (const coord of shape) {
+          grid[r + coord[0]][c + coord[1]] = 1;
+        }
         hand[draggingIdx] = null;
-      // ✅ 成功放置反饋（新增）
-        const placedCells = shape.map(([dr, dc]) => ({ r: r + dr, c: c + dc }));
+
+        // ✅ 成功放置特效
+        const placedCells = shape.map(([dr, dc]) => ({
+          r: r + dr,
+          c: c + dc
+        }));
         spawnPlaceParticles(placedCells);
 
-
-
-        // combo：放置成功但沒消 -> 清 combo；放置失敗不清
+        // combo：放置成功但沒消 -> 清 combo
         const cleared = checkAndClear();
-        if (!cleared) { currentComboCount = 0; updateComboUI(); }
+        if (!cleared) {
+          currentComboCount = 0;
+          updateComboUI();
+        }
 
         if (hand.every(h => h === null)) refreshHand();
 
@@ -1646,13 +1694,19 @@
           if (!s) continue;
           for (let i = 0; i < GRID_SIZE; i++) {
             for (let j = 0; j < GRID_SIZE; j++) {
-              if (canPlace(s, i, j)) { dead = false; break; }
+              if (canPlace(s, i, j)) {
+                dead = false;
+                break;
+              }
             }
             if (!dead) break;
           }
           if (!dead) break;
         }
-        if (dead) { gameOver = true; onGameOver(); }
+        if (dead) {
+          gameOver = true;
+          onGameOver();
+        }
       } else {
         failFeedback();
         startBounceBack(draggingIdx, shape, anchorX, anchorY);
@@ -1661,6 +1715,7 @@
 
     draggingIdx = null;
   }
+
 
   canvas.addEventListener('pointerdown', handlePointerDown);
   window.addEventListener('pointermove', handlePointerMove);

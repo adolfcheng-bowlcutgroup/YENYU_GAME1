@@ -186,7 +186,7 @@
     }
     .boardHeader, .boardRow{
       display:grid;
-      grid-template-columns: 56px 1fr 110px;
+      grid-template-columns: 56px 1fr 110px 92px; /* ✅ + H-COMBO */
       gap: 10px;
       padding: 10px 12px;
       align-items:center;
@@ -298,7 +298,7 @@
               letter-spacing:1px;
               text-align:center;
               margin:2px 0 6px;
-            ">結束了朋友</div>
+            ">結束了我的朋友</div>
 
             <div style="
               text-align:center;
@@ -314,6 +314,23 @@
               font-size:44px;
               line-height:1.05;
             ">0分</div>
+
+            <!-- ✅ 本局最高 COMBO（新增，不影響既有效果） -->
+            <div style="
+              text-align:center;
+              font-weight:900;
+              font-size:14px;
+              color:rgba(255,255,255,0.72);
+              margin-top:10px;
+              margin-bottom:6px;
+            ">本局最高 COMBO</div>
+
+            <div id="goCombo" style="
+              text-align:center;
+              font-weight:1000;
+              font-size:32px;
+              line-height:1.05;
+            ">x0</div>
           </div>
 
           <div class="actions" style="margin-top:0;">
@@ -327,8 +344,27 @@
               <div>RANK</div>
               <div>NAME</div>
               <div class="right">SCORE</div>
+              <div class="right">H-COMBO</div>
             </div>
+
+            <!-- ✅ 前 6 名 -->
             <div id="boardList"></div>
+
+            <!-- ✅ 後 6 名折疊清單（新增，不更動原本列的呈現） -->
+            <details id="moreBoard" style="border-top:1px solid rgba(255,255,255,0.06); display:none;">
+              <summary style="
+                padding:10px 12px;
+                cursor:pointer;
+                user-select:none;
+                color:rgba(255,255,255,0.75);
+                font-weight:900;
+                list-style:none;
+              ">
+                顯示第 7–12 名
+                <span style="float:right; color:rgba(255,255,255,0.5); font-weight:800;">(點我展開)</span>
+              </summary>
+              <div id="boardListMore"></div>
+            </details>
           </div>
 
           <div class="smallNote" id="boardStatus"></div>
@@ -383,22 +419,50 @@
   }
   const deviceUid = getOrCreateDeviceUid();
 
-  async function remoteUpsertBest(name, score) {
+  // ✅ 上傳：score / bestCombo 都採「只增不減」
+  async function remoteUpsertBest(name, score, bestCombo, hCombo) {
     name = (name || "").trim().slice(0, 16);
     if (!name) return;
 
     const ref = doc(db, LEADERBOARD_COL, deviceUid);
     const snap = await getDoc(ref);
-    const prev = snap.exists() ? Number(snap.data().score || 0) : 0;
 
-    if (score > prev) {
-      await setDoc(ref, { uid: deviceUid, name, score, updatedAt: serverTimestamp() }, { merge: true });
-    } else {
-      await setDoc(ref, { uid: deviceUid, name, updatedAt: serverTimestamp() }, { merge: true });
+    const prevScore = snap.exists() ? Number(snap.data().score || 0) : 0;
+    const prevBestCombo = snap.exists() ? Number(snap.data().bestCombo || 0) : 0;
+    const prevHCombo = snap.exists() ? Number(snap.data().hCombo || 0) : 0;
+
+    const next = {
+      uid: deviceUid,
+      name,
+      updatedAt: serverTimestamp()
+    };
+
+    // ✅ 1) 歷史最高 combo：只增不減（跟分數無關）
+    if (typeof bestCombo === "number" && bestCombo > prevBestCombo) {
+      next.bestCombo = bestCombo;
     }
+
+    // ✅ 2) 最高分：只在更高分才更新 score
+    //    並且讓 hCombo 跟著「最高分那局」一起更新
+    if (typeof score === "number" && score > prevScore) {
+      next.score = score;
+
+      // 這局的最高 combo，跟著最高分一起紀錄
+      if (typeof hCombo === "number") {
+        next.hCombo = hCombo;
+      } else {
+        next.hCombo = prevHCombo; // 保底
+      }
+    } else {
+      // 分數沒破紀錄：hCombo 不要動（避免低分局覆蓋）
+      // next.hCombo 不填
+    }
+
+    await setDoc(ref, next, { merge: true });
   }
 
-  async function remoteFetchTop(topN = 10) {
+
+  async function remoteFetchTop(topN = 12) {
     const q = query(collection(db, LEADERBOARD_COL), orderBy("score", "desc"), limit(topN));
     const snap = await getDocs(q);
     return snap.docs.map(d => d.data());
@@ -441,9 +505,14 @@
   const boardList = document.getElementById("boardList");
   const boardStatus = document.getElementById("boardStatus");
 
+  // ✅ 新增：折疊榜單容器
+  const boardListMore = document.getElementById("boardListMore");
+  const moreBoard = document.getElementById("moreBoard");
+
   // ✅ GAME OVER elements
   const gameOverPanel = document.getElementById("gameOverPanel");
   const goScore = document.getElementById("goScore");
+  const goCombo = document.getElementById("goCombo"); // ✅ 新增
 
   function showOverlay() { overlay.style.display = "flex"; }
   function hideOverlay() { overlay.style.display = "none"; }
@@ -503,7 +572,7 @@
     }[m]));
   }
 
-  function renderRow(rank, name, score, isMe=false) {
+  function renderRow(rank, name, score, hCombo, isMe=false) {
     let pillBg = "rgba(255,255,255,0.10)";
     let pillBd = "rgba(255,255,255,0.10)";
     if (rank === 1) { pillBg = "rgba(255,215,0,0.22)"; pillBd = "rgba(255,215,0,0.35)"; }
@@ -512,20 +581,31 @@
 
     const div = document.createElement("div");
     div.className = "boardRow" + (isMe ? " meRow" : "");
+
+    const s = Number(score || 0);
+    const hc = Number(hCombo || 0);
+
     div.innerHTML = `
       <div class="rankPill" style="background:${pillBg};border-color:${pillBd}">${rank}</div>
       <div>${escapeHtml(name || "-")}${isMe ? ' <span class="muted">(你)</span>' : ""}</div>
-      <div class="right">${Number(score||0).toLocaleString()}</div>
+      <div class="right">${s.toLocaleString()}</div>
+      <div class="right">x${hc}</div>
     `;
     return div;
   }
 
+
+
   async function refreshBoardUI() {
     boardStatus.textContent = "讀取中...";
     boardList.innerHTML = "";
+    boardListMore.innerHTML = "";
+    moreBoard.open = false;
+    moreBoard.style.display = "none";
 
     try {
-      const top = await withTimeout(remoteFetchTop(10), 3500, "Firestore read timeout");
+      // ✅ 改為抓 12 筆：前 6 顯示，後 6 摺疊
+      const top = await withTimeout(remoteFetchTop(12), 3500, "Firestore read timeout");
 
       if (!top.length) {
         const empty = document.createElement("div");
@@ -534,7 +614,9 @@
           <div class="rankPill">-</div>
           <div class="muted">目前沒有紀錄</div>
           <div class="right muted">-</div>
+          <div class="right muted">-</div>
         `;
+
         boardList.appendChild(empty);
         boardStatus.textContent = "目前榜單為空。先玩一局產生資料～";
         return;
@@ -542,8 +624,18 @@
 
       top.forEach((item, i) => {
         const isMe = (item.uid === deviceUid);
-        boardList.appendChild(renderRow(i+1, item.name, item.score, isMe));
+        const row = renderRow(i+1, item.name, item.score, item.hCombo, isMe);
+
+        if (i < 6) boardList.appendChild(row);
+        else boardListMore.appendChild(row);
       });
+
+
+      if (top.length > 6) {
+        moreBoard.style.display = "block";
+        const summarySpan = moreBoard.querySelector("summary span");
+        if (summarySpan) summarySpan.textContent = `(點我展開，共 ${top.length - 6} 筆)`;
+      }
 
       const me = await withTimeout(remoteFetchMe(), 3500, "Firestore me timeout");
       if (me && typeof me.score === "number") {
@@ -551,16 +643,24 @@
         if (!inTop) {
           const sep = document.createElement("div");
           sep.className = "sep";
+          // 分隔線插在「前 6」與折疊區之間會怪，所以插在前 6 的尾端
           boardList.appendChild(sep);
 
           const myRank = await withTimeout(remoteComputeMyRank(me.score), 3500, "Firestore rank timeout");
           if (myRank != null) {
-            boardList.appendChild(renderRow(myRank, me.name, me.score, true));
+            boardList.appendChild(renderRow(myRank, me.name, me.score, me.hCombo, true));
+
           }
         }
       }
 
-      boardStatus.textContent = "已更新（全球排行）。";
+      // ✅ 顯示「使用者最高 COMBO」
+      const me2 = await withTimeout(remoteFetchMe(), 3500, "Firestore me timeout 2");
+      if (me2 && typeof me2.bestCombo === "number") {
+        boardStatus.textContent = `你的最高 COMBO：x${me2.bestCombo}`;
+      } else {
+        boardStatus.textContent = `你的最高 COMBO：x${bestComboLocal}`;
+      }
     } catch (e) {
       console.error("Leaderboard error:", e);
       boardStatus.textContent = "排行榜讀取失敗。請開 Console 看錯誤訊息。";
@@ -569,6 +669,7 @@
       err.innerHTML = `
         <div class="rankPill">!</div>
         <div class="muted">無法載入全球榜</div>
+        <div class="right muted">-</div>
         <div class="right muted">-</div>
       `;
       boardList.appendChild(err);
@@ -605,6 +706,13 @@
 
   let particles = [];
   let lineFlashes = [];
+  let haloAngle = 0;           // 畫面用角度（弧度）
+  let haloSpeed = 0.018;       // 轉速（可調：越大轉越快）
+  let haloPulse = 0;           // 成功放置時加強一下光暈（可選）
+  let haloDashOffset = 0;
+  // ✅ 成功放置粒子（新增，和消除粒子分開）
+  let placeParticles = [];
+  let placeRings = [];
 
   // === Clear animation state ===
   // grid cell: 0 empty, 1 filled, 2 clearing (fade-out)
@@ -658,6 +766,11 @@
 
   let shakeIntensity = 0;
   let currentComboCount = 0;
+
+  // ✅ 新增：本局最高 combo + 本機歷史最高 combo（不影響右上 combo 顯示與消除效果）
+  let maxComboThisRun = 0;
+  let bestComboLocal = 0;
+  const LS_BEST_COMBO_KEY = "blockBestComboV1";
 
   let floatingTexts = [];
   let layout = null;
@@ -805,6 +918,82 @@
     ctx.restore();
   }
 
+  function drawRotatingHalo() {
+    const x = layout.gridX;
+    const y = layout.gridY;
+    const w = GRID_SIZE * CELL_SIZE;
+    const h = GRID_SIZE * CELL_SIZE;
+
+    // 外框往外擴的距離、圓角、線寬（可調）
+    const pad = 2;
+    const r = 5;
+    const baseLW = 1;   // 底光線寬
+    const runLW  = 3;   // 跑光線寬（略粗）
+
+    // 跑光速度（越大越快）
+    const speed = 1.5;
+
+    // 用時間驅動（不依賴 haloAngle 也可以）
+    const t = performance.now() / 1000;
+
+    // 近似外框周長（圓角矩形）
+    const innerW = w + pad * 2;
+    const innerH = h + pad * 2;
+    const perim = 2 * (innerW + innerH - 4 * r) + 2 * Math.PI * r;
+
+    // 主亮點長度：佔整圈比例（越大亮點越長）
+    const segLen = perim * 1;        // 22% 周長
+    const gapLen = perim - segLen;
+
+    // 跑光位置（沿路徑前進）
+    const offset = -(t * speed * 120);  // 120 只是縮放手感，可調
+
+    ctx.save();
+
+    // 1) 先畫「整圈淡淡的霓虹底光」：四邊永遠看得到
+    ctx.globalAlpha = 15;
+    ctx.lineWidth = baseLW;
+    ctx.strokeStyle = "rgba(255,255,255,0.16)";
+    ctx.shadowColor = "rgba(255,215,0,0.22)";
+    ctx.shadowBlur = 15;
+
+    ctx.beginPath();
+    pathRoundedRect(x - pad, y - pad, w + pad * 2, h + pad * 2, r);
+    ctx.stroke();
+
+    // 2) 再畫「主跑光」：用 dash + dashOffset 讓亮段沿著邊框跑
+    ctx.lineWidth = runLW;
+    ctx.setLineDash([segLen, gapLen]);
+    ctx.lineDashOffset = offset;
+
+    // 亮段本體顏色（可以換成你想要的霓虹色）
+    ctx.strokeStyle = "#FFFFFF";
+    ctx.shadowColor = "#FFFFFF";
+    ctx.shadowBlur = 15;
+
+    ctx.beginPath();
+    pathRoundedRect(x - pad, y - pad, w + pad * 2, h + pad * 2, r);
+    ctx.stroke();
+
+    // 3) 可選：再疊一層更亮的「核心」讓主亮點更像 Apple Watch
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([segLen * 0.55, gapLen + segLen * 0.45]);
+    ctx.lineDashOffset = offset - 18; // 稍微錯開一點更有層次
+    ctx.strokeStyle = "rgba(255,255,255,0.80)";
+    ctx.shadowColor = "rgba(255,255,255,0.65)";
+    ctx.shadowBlur = 10;
+
+    ctx.beginPath();
+    pathRoundedRect(x - pad, y - pad, w + pad * 2, h + pad * 2, r);
+    ctx.stroke();
+
+    // 清掉 dash，避免影響其他畫圖
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+
+
   function resetGame() {
     applyLayout(computeLayout());
 
@@ -820,8 +1009,15 @@
     floatingTexts = [];
     particles = [];
     lineFlashes = [];
+    placeParticles = [];
+    placeRings = [];
+    haloPulse = 0;
     failOverlayLife = 0;
     bounceLife = 0;
+
+    // ✅ combo 最高紀錄（新增）
+    maxComboThisRun = 0;
+    bestComboLocal = Number(localStorage.getItem(LS_BEST_COMBO_KEY) || 0);
 
     // clear-anim state
     clearingCells = [];
@@ -877,6 +1073,94 @@
           size: 2 + Math.random() * 3
         });
       }
+    }
+  }
+
+    // ✅ 成功放置：粒子 + 擴散圈 + 小浮字（新增）
+  function spawnPlaceParticles(cells) {
+    // 每格少量粒子
+    for (const {r, c} of cells) {
+      const cx = layout.gridX + c * CELL_SIZE + CELL_SIZE / 2;
+      const cy = layout.gridY + r * CELL_SIZE + CELL_SIZE / 2;
+
+      const n = 4 + Math.floor(Math.random() * 4); // 4~7
+      for (let i = 0; i < n; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const spd = 0.8 + Math.random() * 2.2;
+        placeParticles.push({
+          x: cx, y: cy,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd - 0.6,
+          life: 1,
+          size: 1.2 + Math.random() * 2.0
+        });
+      }
+    }
+
+    // 中心擴散圈
+    placeRings.push({
+      x: layout.gridX + (GRID_SIZE * CELL_SIZE) / 2,
+      y: layout.gridY + (GRID_SIZE * CELL_SIZE) / 2,
+      r: 14,
+      life: 1
+    });
+
+    // 外圈 halo 稍微加強一下
+    haloPulse = Math.min(1, haloPulse + 0.65);
+
+    // 短命回饋文字（不動你 combo 的浮字）
+    if (Math.random() < 0.15) {
+      floatingTexts.push({
+        lines: [{ txt: "放置成功！", color: "#B7FF6A", sizeMul: 1.0 }],
+        x: layout.gridX + (GRID_SIZE * CELL_SIZE) / 2,
+        y: layout.gridY + (GRID_SIZE * CELL_SIZE) / 2 + 40,
+        life: 1,
+        vy: 0.8,
+        size: 22,
+        align: "center",
+        stroke: "rgba(0,0,0,0.65)"
+      });
+    }
+  }
+
+  function updateAndDrawPlaceParticles() {
+    for (let i = placeParticles.length - 1; i >= 0; i--) {
+      const p = placeParticles[i];
+      p.life -= 0.05;
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy += 0.10;
+      p.vx *= 0.96;
+      p.vy *= 0.96;
+
+      if (p.life <= 0) { placeParticles.splice(i, 1); continue; }
+
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, p.life) * 0.85;
+      ctx.fillStyle = "#FFFFFF";
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  function updateAndDrawPlaceRings() {
+    for (let i = placeRings.length - 1; i >= 0; i--) {
+      const r = placeRings[i];
+      r.life -= 0.06;
+      r.r += 4.2;
+
+      if (r.life <= 0) { placeRings.splice(i, 1); continue; }
+
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, r.life) * 0.25;
+      ctx.strokeStyle = "rgba(255,255,255,1)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
     }
   }
 
@@ -977,7 +1261,7 @@
   }
 
   function calcGain(lines, comboCount) {
-    const base = lines * 20;
+    const base = lines * 10;
     const multiLineBonus = Math.max(0, lines - 1) * 16;
     const baseTotal = base + multiLineBonus;
 
@@ -1041,6 +1325,9 @@
 
     // ✅ combo++
     currentComboCount++;
+    // ✅ 新增：本局最高 combo 追蹤（不影響右上 combo 呈現）
+    maxComboThisRun = Math.max(maxComboThisRun, currentComboCount);
+
     updateComboUI();
 
     // ✅ 乘數計分
@@ -1193,6 +1480,15 @@
 
   // ✅ GAME OVER：先顯示視窗+分數，Firestore/排行榜在背景跑（避免卡死）
   function onGameOver() {
+    // ✅ 本局最高 combo 顯示（新增）
+    goCombo.textContent = `x${maxComboThisRun}`;
+
+    // ✅ 更新本機「歷史最高 combo」（新增）
+    if (maxComboThisRun > bestComboLocal) {
+      bestComboLocal = maxComboThisRun;
+      localStorage.setItem(LS_BEST_COMBO_KEY, String(bestComboLocal));
+    }
+
     // UI 先出來（避免 await 卡住）
     switchTab("board");
     showOverlay();
@@ -1211,7 +1507,7 @@
     // 背景處理：上傳 + 刷新排行榜（都有 timeout 保護）
     (async () => {
       try {
-        await withTimeout(remoteUpsertBest(name, score), 3500, "Firestore write timeout");
+        await withTimeout(remoteUpsertBest(name, score, bestComboLocal, maxComboThisRun), 3500, "Firestore write timeout");
         boardStatus.textContent = "分數已上傳，排行榜更新中...";
         await refreshBoardUI();
       } catch (e) {
@@ -1283,6 +1579,11 @@
       if (canPlace(shape, r, c)) {
         for (const coord of shape) grid[r + coord[0]][c + coord[1]] = 1;
         hand[draggingIdx] = null;
+      // ✅ 成功放置反饋（新增）
+        const placedCells = shape.map(([dr, dc]) => ({ r: r + dr, c: c + dc }));
+        spawnPlaceParticles(placedCells);
+
+
 
         // combo：放置成功但沒消 -> 清 combo；放置失敗不清
         const cleared = checkAndClear();
@@ -1409,6 +1710,9 @@
       ctx.fillRect(x, y, CELL_SIZE - 4, CELL_SIZE - 4);
     }
 
+    // ✅ 外圈旋轉光暈
+    drawRotatingHalo();
+
     if (currentTheme) {
       // 已放方塊（含 clearing 動畫）
       for (let r = 0; r < GRID_SIZE; r++) for (let c = 0; c < GRID_SIZE; c++) {
@@ -1477,6 +1781,12 @@
       }
 
       drawHand();
+
+      // ✅ 成功放置特效
+      updateAndDrawPlaceRings();
+      updateAndDrawPlaceParticles();
+
+      // 既有：消除粒子、回彈、浮字
       updateAndDrawParticles();
       updateAndDrawBounce();
       updateAndDrawFloatingTexts();
@@ -1498,10 +1808,19 @@
     // ✅ clearing 動畫更新（真正清格）
     updateClearingCells();
 
+    // ✅ 更新旋轉角度（順時針）
+    haloAngle += haloSpeed;
+    if (haloAngle > Math.PI * 2) haloAngle -= Math.PI * 2;
+
+    // ✅ 每幀排程下一幀（一定要在 function 內）
     requestAnimationFrame(animate);
   }
 
+  // ✅ 注意：這行不要放在 animate() 外面（你原本那行要刪掉）
+  // requestAnimationFrame(animate);
+
   window.addEventListener('resize', () => applyLayout(computeLayout()));
+
 
   // ===== Boot =====
   (function boot() {

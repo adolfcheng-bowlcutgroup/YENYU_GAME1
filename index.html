@@ -52,6 +52,7 @@
       width:95vw; max-width:860px;
       display:flex; justify-content:center;
     }
+
     canvas{
       background:#222;
       border-radius:12px;
@@ -79,6 +80,13 @@
       z-index: 9999;
       padding: 20px;
     }
+
+    #viewBoard{
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
     .panel{
       width:min(580px, 95vw);
       background: rgba(25,25,25,0.98);
@@ -86,6 +94,9 @@
       border-radius: 18px;
       box-shadow: 0 20px 80px rgba(0,0,0,0.6);
       overflow: hidden;
+      max-height: min(86vh, 720px);
+      display: flex;
+      flex-direction: column;
     }
     .panelHead{
       padding: 16px 18px;
@@ -102,6 +113,9 @@
     }
     .panelBody{
       padding: 16px 18px 18px;
+      overflow: hidden;   /* 重要：讓裡面可捲動區生效 */
+      display: flex;
+      flex-direction: column;
     }
 
     .tabs{
@@ -118,6 +132,7 @@
       cursor:pointer;
       font-weight: 800;
     }
+
     .tabBtn.active{
       background: rgba(255,255,255,0.14);
       border-color: rgba(255,255,255,0.20);
@@ -181,13 +196,17 @@
       margin-top: 10px;
       border: 1px solid rgba(255,255,255,0.10);
       border-radius: 14px;
-      overflow: hidden;
       background: rgba(255,255,255,0.04);
+      flex: 1;
+      min-height: 260px;
+      max-height: 52vh;
+      overflow: auto;
+      -webkit-overflow-scrolling: touch;
     }
     .boardHeader, .boardRow{
       display:grid;
-      grid-template-columns: 56px 1fr 110px 92px; /* ✅ + H-COMBO */
-      gap: 10px;
+      grid-template-columns: 52px minmax(0, 1fr) 92px 78px; /* ✅ 更省空間 */
+      gap: 8px;
       padding: 10px 12px;
       align-items:center;
     }
@@ -233,7 +252,13 @@
       font-size: 12px;
       color: rgba(255,255,255,0.60);
       margin-top: 10px;
-      line-height: 1.5;
+      line-height: 1.5; 
+    }
+     .nameCell{
+      min-width: 0;              /* ✅ 讓省略號真的能生效 */
+      white-space: nowrap;       /* ✅ 不換行 */
+      overflow: hidden;          /* ✅ 截斷 */
+      text-overflow: ellipsis;   /* ✅ 省略號 */
     }
   </style>
 </head>
@@ -587,7 +612,10 @@
 
     div.innerHTML = `
       <div class="rankPill" style="background:${pillBg};border-color:${pillBd}">${rank}</div>
-      <div>${escapeHtml(name || "-")}${isMe ? ' <span class="muted">(你)</span>' : ""}</div>
+      <div class="nameCell">
+  ${escapeHtml(name || "-")}${isMe ? ' <span class="muted">(你)</span>' : ""}
+      </div>
+
       <div class="right">${s.toLocaleString()}</div>
       <div class="right">x${hc}</div>
     `;

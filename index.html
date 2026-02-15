@@ -81,6 +81,11 @@
       padding: 20px;
     }
 
+    #viewLogin, #viewBoard{
+      flex: 1;
+      min-height: 0;
+    }
+
     #viewBoard{
       overflow: hidden;
       display: flex;
@@ -116,6 +121,7 @@
       overflow: hidden;   /* 重要：讓裡面可捲動區生效 */
       display: flex;
       flex-direction: column;
+      min-height: 0;
     }
 
     .tabs{
@@ -198,10 +204,10 @@
       border-radius: 14px;
       background: rgba(255,255,255,0.04);
       flex: 1;
-      min-height: 260px;
-      max-height: 52vh;
+      min-height: 0;
       overflow: auto;
       -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
     }
     .boardHeader, .boardRow{
       display:grid;
@@ -254,11 +260,48 @@
       margin-top: 10px;
       line-height: 1.5; 
     }
-     .nameCell{
-      min-width: 0;              /* ✅ 讓省略號真的能生效 */
-      white-space: nowrap;       /* ✅ 不換行 */
-      overflow: hidden;          /* ✅ 截斷 */
-      text-overflow: ellipsis;   /* ✅ 省略號 */
+    .nameCell{
+      min-width: 0;
+      overflow: hidden;
+      white-space: normal;           /* ✅ 允許換行 */
+      display: -webkit-box;          /* ✅ 兩行省略 */
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      line-height: 1.15;
+    }
+
+    .goStats{
+      display:flex;
+      gap:12px;
+      margin-top: 10px;
+    }
+
+    .goCard{
+      flex:1;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 14px;
+      padding: 10px 12px;
+      text-align: center;
+    }
+
+    .goLabel{
+      font-weight: 900;
+      font-size: 13px;
+      color: rgba(255,255,255,0.72);
+      margin-bottom: 6px;
+    }
+
+    .goValue{
+      font-weight: 1000;
+      font-size: 34px;
+      line-height: 1.05;
+    }
+
+    /* 手機太窄就自動換行成上下兩塊 */
+    @media (max-width: 420px){
+      .goStats{ flex-wrap: wrap; }
+      .goCard{ flex: 1 1 100%; }
     }
   </style>
 </head>
@@ -316,47 +359,27 @@
 
         <div id="viewBoard" style="display:none;">
           <!-- ✅ GAME OVER 大字顯示 -->
-          <div id="gameOverPanel" style="display:none; margin-bottom:12px;">
-            <div id="goTitle" style="
-              font-weight:1000;
-              font-size:34px;
-              letter-spacing:1px;
-              text-align:center;
-              margin:2px 0 6px;
-            ">結束了我的朋友</div>
+        <div id="gameOverPanel" style="display:none; margin-bottom:12px;">
+          <div id="goTitle" style="
+            font-weight:1000;
+            font-size:34px;
+            letter-spacing:1px;
+            text-align:center;
+            margin:2px 0 10px;
+          ">結束了我的朋友</div>
 
-            <div style="
-              text-align:center;
-              font-weight:900;
-              font-size:14px;
-              color:rgba(255,255,255,0.72);
-              margin-bottom:6px;
-            ">本局得分</div>
+          <div class="goStats">
+            <div class="goCard">
+              <div class="goLabel">本局得分</div>
+              <div id="goScore" class="goValue">0分</div>
+            </div>
 
-            <div id="goScore" style="
-              text-align:center;
-              font-weight:1000;
-              font-size:44px;
-              line-height:1.05;
-            ">0分</div>
-
-            <!-- ✅ 本局最高 COMBO（新增，不影響既有效果） -->
-            <div style="
-              text-align:center;
-              font-weight:900;
-              font-size:14px;
-              color:rgba(255,255,255,0.72);
-              margin-top:10px;
-              margin-bottom:6px;
-            ">本局最高 COMBO</div>
-
-            <div id="goCombo" style="
-              text-align:center;
-              font-weight:1000;
-              font-size:32px;
-              line-height:1.05;
-            ">x0</div>
+            <div class="goCard">
+              <div class="goLabel">本局最高 COMBO</div>
+              <div id="goCombo" class="goValue">x0</div>
+            </div>
           </div>
+        </div>
 
           <div class="actions" style="margin-top:0;">
             <button id="btnBackToLogin" class="btn btnGhost">回到首頁</button>
@@ -610,15 +633,14 @@
     const s = Number(score || 0);
     const hc = Number(hCombo || 0);
 
-    div.innerHTML = `
-      <div class="rankPill" style="background:${pillBg};border-color:${pillBd}">${rank}</div>
-      <div class="nameCell">
-  ${escapeHtml(name || "-")}${isMe ? ' <span class="muted">(你)</span>' : ""}
-      </div>
-
-      <div class="right">${s.toLocaleString()}</div>
-      <div class="right">x${hc}</div>
-    `;
+  div.innerHTML = `
+    <div class="rankPill" style="background:${pillBg};border-color:${pillBd}">${rank}</div>
+    <div class="nameCell" title="${escapeHtml(name || "-")}">
+      ${escapeHtml(name || "-")}${isMe ? ' <span class="muted">(你)</span>' : ""}
+    </div>
+    <div class="right">${s.toLocaleString()}</div>
+    <div class="right">x${hc}</div>
+  `;
     return div;
   }
 
@@ -979,7 +1001,7 @@
     ctx.save();
 
     // 1) 先畫「整圈淡淡的霓虹底光」：四邊永遠看得到
-    ctx.globalAlpha = 15;
+    ctx.globalAlpha = 1;
     ctx.lineWidth = baseLW;
     ctx.strokeStyle = "rgba(255,255,255,0.16)";
     ctx.shadowColor = "rgba(255,215,0,0.22)";

@@ -97,7 +97,7 @@
       flex: 1;
       min-height: 0;
 
-      overflow-y: auto;                 /* ✅ 讓整個排行榜頁可滾 */
+      overflow-y: visible;                 /* ✅ 讓整個排行榜頁可滾 */
       -webkit-overflow-scrolling: touch;
       touch-action: pan-y;
     }
@@ -349,7 +349,7 @@
   <div id="overlay">
     <div class="panel">
       <div class="panelHead">
-        <div class="title">羽の小遊戲！V2</div>
+        <div class="title">羽の遊戲！V3炸彈版</div>
         <div id="playerMini" class="muted"></div>
       </div>
 
@@ -373,6 +373,7 @@
           <div class="hint">
             ※ 一次消越多，分數越高！<br/>
             ※ COMBO越多，分數*倍率越高！<br/>
+            ※ 消除炸彈！3*3都會爆炸！
           </div>
         </div>
 
@@ -418,7 +419,7 @@
             <div id="boardList"></div>
 
             <!-- ✅ 後 6 名折疊清單（新增，不更動原本列的呈現） -->
-            <details id="moreBoard" style="border-top:1px solid rgba(255,255,255,0.06); display:none;">
+            <details id="moreBoard" hidden style="border-top:1px solid rgba(255,255,255,0.06);">
               <summary style="
                 padding:10px 12px;
                 cursor:pointer;
@@ -428,7 +429,7 @@
                 list-style:none;
               ">
                 顯示第 7–12 名
-                <span style="float:right; color:rgba(255,255,255,0.5); font-weight:800;">(點我展開)</span>
+                 <span id="moreBoardHint" style="float:right; color:rgba(255,255,255,0.5); font-weight:800;">(點我展開)</span>
               </summary>
               <div id="boardListMore"></div>
             </details>
@@ -510,14 +511,13 @@
 const deviceUid = getOrCreateDeviceUid();
 
   // ✅ 上傳：score / bestCombo 都採「只增不減」
-    async function remoteUpsertBest(name, score, bestCombo, hCombo) {
+  async function remoteUpsertBest(name, score, lifetimeBestCombo, runMaxCombo) {
     name = (name || "").trim().slice(0, 16);
     if (!name) return;
 
     const ref = doc(db, LEADERBOARD_COL, deviceUid);
     const snap = await getDoc(ref);
 
-    // ✅ NaN/奇怪舊值一律當 0
     const prevScoreRaw = snap.exists() ? snap.data().score : 0;
     const prevBestComboRaw = snap.exists() ? snap.data().bestCombo : 0;
 
@@ -525,8 +525,8 @@ const deviceUid = getOrCreateDeviceUid();
     const prevBestCombo = Number.isFinite(Number(prevBestComboRaw)) ? Number(prevBestComboRaw) : 0;
 
     const scoreN = Number(score);
-    const hComboN = Number(hCombo);
-    const bestComboN = Number(bestCombo);
+    const runMaxComboN = Number(runMaxCombo);
+    const lifetimeBestComboN = Number(lifetimeBestCombo);
 
     const next = {
       uid: deviceUid,
@@ -536,28 +536,33 @@ const deviceUid = getOrCreateDeviceUid();
 
     const isNewDoc = !snap.exists();
 
-    // ✅ 新文件：直接寫入（避免 0 分或其他狀況沒寫到）
+    // 新文件：直接寫入（讓第一次就有資料）
     if (isNewDoc) {
       if (Number.isFinite(scoreN)) next.score = scoreN;
-      if (Number.isFinite(hComboN)) next.hCombo = hComboN;
-      if (Number.isFinite(bestComboN)) next.bestCombo = bestComboN;
+      if (Number.isFinite(runMaxComboN)) next.hCombo = runMaxComboN;
+      if (Number.isFinite(lifetimeBestComboN)) next.bestCombo = lifetimeBestComboN;
       await setDoc(ref, next, { merge: true });
       return;
     }
 
-    // 1) 歷史最高 combo：只增不減
-    if (Number.isFinite(bestComboN) && bestComboN > prevBestCombo) {
-      next.bestCombo = bestComboN;
+    // 生涯最高 combo：只增不減
+    if (Number.isFinite(lifetimeBestComboN) && lifetimeBestComboN > prevBestCombo) {
+      next.bestCombo = lifetimeBestComboN;
     }
 
-    // 2) 最高分：只在更高分才更新 score + 該局 hCombo
+    // 最高分：只在更高分才更新 score + 該局 hCombo
     if (Number.isFinite(scoreN) && scoreN > prevScore) {
       next.score = scoreN;
-      if (Number.isFinite(hComboN)) next.hCombo = hComboN;
+      if (Number.isFinite(runMaxComboN)) next.hCombo = runMaxComboN;
     }
+
+    // 如果你想「hCombo 也只增不減」（可選），加這段：
+    // const prevHCombo = Number.isFinite(Number(snap.data().hCombo)) ? Number(snap.data().hCombo) : 0;
+    // if (Number.isFinite(runMaxComboN) && runMaxComboN > prevHCombo) next.hCombo = runMaxComboN;
 
     await setDoc(ref, next, { merge: true });
   }
+
 
 
   // ✅ 不用複合索引版本：只 orderBy(score)，同分 tie-break 前端處理
@@ -593,8 +598,8 @@ const deviceUid = getOrCreateDeviceUid();
       const ta = a.updatedAt?.seconds ? a.updatedAt.seconds : 0;
       const tb = b.updatedAt?.seconds ? b.updatedAt.seconds : 0;
 
-      // 你原本是 asc（越早更新越前面），這裡保持一致
-      return ta - tb;
+      // 越晚更新越前面
+      return tb - ta;
     });
 
     return cleaned.slice(0, topN);
@@ -664,6 +669,7 @@ const deviceUid = getOrCreateDeviceUid();
   // ✅ 新增：折疊榜單容器
   const boardListMore = document.getElementById("boardListMore");
   const moreBoard = document.getElementById("moreBoard");
+  const moreBoardHint = document.getElementById("moreBoardHint");
 
   // ✅ GAME OVER elements
   const gameOverPanel = document.getElementById("gameOverPanel");
@@ -757,7 +763,7 @@ const deviceUid = getOrCreateDeviceUid();
     boardList.innerHTML = "";
     boardListMore.innerHTML = "";
     moreBoard.open = false;
-    moreBoard.style.display = "none";
+    moreBoard.hidden = true;
 
     try {
       // ✅ 抓 12 筆：前 6 顯示，後 6 摺疊
@@ -787,9 +793,8 @@ const deviceUid = getOrCreateDeviceUid();
       });
 
       if (top.length > 6) {
-        moreBoard.style.display = "block";
-        const summarySpan = moreBoard.querySelector("summary span");
-        if (summarySpan) summarySpan.textContent = `(點我展開，共 ${top.length - 6} 筆)`;
+        moreBoard.hidden = false;
+        if (moreBoardHint) moreBoardHint.textContent = `(點我展開，共 ${top.length - 6} 筆)`;
       }
 
       // ✅ 我的資料
@@ -1072,21 +1077,25 @@ const deviceUid = getOrCreateDeviceUid();
     return null;
   }
 
-  // 檢查：hand 是否至少有一塊能放（用所有旋轉/鏡像變體）
-  function handHasAnyMove(handArr){
-    for (const baseOrVariant of handArr){
-      if (!baseOrVariant) continue;
-      const vars = allVariants(baseOrVariant);
-      for (const v of vars){
-        for (let r = 0; r < GRID_SIZE; r++){
-          for (let c = 0; c < GRID_SIZE; c++){
-            if (canPlace(v, r, c)) return true;
-          }
-        }
+  // 只檢查「目前這個 shape（當前朝向）」是否有任一可放位置
+  function shapeHasAnyMove(shape){
+    if (!shape) return false;
+    for (let r = 0; r < GRID_SIZE; r++){
+      for (let c = 0; c < GRID_SIZE; c++){
+        if (canPlace(shape, r, c)) return true;
       }
     }
     return false;
   }
+
+  // 檢查：hand 是否至少有一塊能放（用所有旋轉/鏡像變體）
+  function handHasAnyMove(handArr){
+    for (const shape of handArr){
+      if (shapeHasAnyMove(shape)) return true;
+    }
+    return false;
+  }
+
 
   // 最後保底：強制生成「至少有一塊能放」的手牌
   function forceSafeHand(pool){
@@ -1124,13 +1133,23 @@ const deviceUid = getOrCreateDeviceUid();
   // ✅ 你要的版本：不分早期/後期，永遠照權重抽 + 死牌保底
   function refreshHand() {
     const pool = SHAPE_DEFS;
+    if (bombCooldown > 0) bombCooldown--;
 
     for (let attempt = 0; attempt < 3; attempt++) {
       const candidate = [];
       for (let i = 0; i < 3; i++) {
         const base = pickWeightedFromPool(pool);
-        candidate.push(randomVariant(base.shape ?? base));
+        const v = randomVariant(base.shape ?? base);
+
+        if (bombCooldown <= 0 && Math.random() < BOMB_SHAPE_CHANCE) {
+          const idx = Math.floor(Math.random() * v.length);
+          v[idx] = [v[idx][0], v[idx][1], 1];
+          bombCooldown = randInt(BOMB_COOLDOWN_MIN, BOMB_COOLDOWN_MAX);
+        }
+
+        candidate.push(v);
       }
+
 
       if (handHasAnyMove(candidate)) {
         hand = candidate;
@@ -1148,6 +1167,19 @@ const deviceUid = getOrCreateDeviceUid();
 
   let currentTheme;
   let grid, hand, score, highScore;
+  // ================================
+  // Bomb feature
+  // ================================
+  let bombGrid = null;          // 9x9 boolean：該格是否有炸彈
+  let bombCooldown = 0;         // 控制「不定期」：出過炸彈後會冷卻幾次 refreshHand
+  const BOMB_SHAPE_CHANCE = 0.10; // 大概 10% 機率讓一個形狀帶炸彈（會被 cooldown 限制）
+  const BOMB_COOLDOWN_MIN = 2;   // 冷卻最少幾次 refreshHand
+  const BOMB_COOLDOWN_MAX = 5;   // 冷卻最多幾次 refreshHand
+
+  function randInt(a, b) { // inclusive
+    return a + Math.floor(Math.random() * (b - a + 1));
+}
+
 
   let draggingIdx = null;
   let pointerX = 0, pointerY = 0;
@@ -1294,6 +1326,42 @@ const deviceUid = getOrCreateDeviceUid();
     ctx.restore();
   }
 
+  function drawBombIcon(cx, cy, size) {
+  // cx,cy: icon center
+  const r = size * 0.18;
+
+  ctx.save();
+  ctx.globalAlpha = 0.95;
+
+  // 主體
+  ctx.fillStyle = "rgba(0,0,0,0.75)";
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 高光
+  ctx.fillStyle = "rgba(255,255,255,0.25)";
+  ctx.beginPath();
+  ctx.arc(cx - r*0.35, cy - r*0.35, r*0.35, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 引線
+  ctx.strokeStyle = "rgba(255,220,120,0.95)";
+  ctx.lineWidth = Math.max(1, size * 0.03);
+  ctx.beginPath();
+  ctx.moveTo(cx + r*0.2, cy - r*0.9);
+  ctx.quadraticCurveTo(cx + r*1.0, cy - r*1.3, cx + r*0.9, cy - r*2.0);
+  ctx.stroke();
+
+  // 火花
+  ctx.fillStyle = "rgba(255,180,60,0.95)";
+  ctx.beginPath();
+  ctx.arc(cx + r*0.95, cy - r*2.0, r*0.25, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
   function drawTextWithStroke(txt, x, y, size, color, stroke = "rgba(0,0,0,0.55)", align = "center") {
     ctx.save();
     ctx.font = `900 ${size}px Arial`;
@@ -1387,8 +1455,18 @@ const deviceUid = getOrCreateDeviceUid();
     currentTheme = THEMES[Math.floor(Math.random() * THEMES.length)];
 
     grid = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(0));
+    bombGrid = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(false));
+    bombCooldown = 0;
+
     score = 0;
-    highScore = Number(localStorage.getItem('blockHighScore') || 0);
+    highScore = 0;
+    try {
+      highScore = Number(localStorage.getItem('blockHighScore') || 0);
+    } catch (e) {
+      highScore = 0;
+    }
+    document.getElementById('highScore').innerText = String(highScore);
+
 
     gameOver = false;
     shakeIntensity = 0;
@@ -1404,7 +1482,11 @@ const deviceUid = getOrCreateDeviceUid();
 
     // ✅ combo 最高紀錄（新增）
     maxComboThisRun = 0;
-    bestComboLocal = Number(localStorage.getItem(LS_BEST_COMBO_KEY) || 0);
+    try {
+      bestComboLocal = Number(localStorage.getItem(LS_BEST_COMBO_KEY) || 0);
+    } catch (e) {
+      bestComboLocal = 0;
+    }
 
     // clear-anim state
     clearingCells = [];
@@ -1429,12 +1511,42 @@ const deviceUid = getOrCreateDeviceUid();
     return true;
   }
 
-  function spawnClearParticles(cells) {
+  // ✅ GameOver 判斷用：把 clearing(2) 視為空格（可放）
+  // 目的：避免「清除動畫尚未完成」就提早判定 dead hand
+  function canPlaceForGameOver(shape, r, c) {
+    if (!shape || r < 0 || c < 0) return false;
+    for (let i = 0; i < shape.length; i++) {
+      const nr = r + shape[i][0];
+      const nc = c + shape[i][1];
+      if (nr >= GRID_SIZE || nc >= GRID_SIZE) return false;
+
+      const cell = grid[nr][nc];
+      // ✅ 允許 0(空) 或 2(clearing)；1 仍然不可放
+      if (cell === 1) return false;
+    }
+    return true;
+  }
+
+// ✅ GameOver 判斷用：檢查 shape 是否有任一可放位置（含 clearing 當空）
+function shapeHasAnyMoveForGameOver(shape) {
+  if (!shape) return false;
+  for (let r = 0; r < GRID_SIZE; r++) {
+    for (let c = 0; c < GRID_SIZE; c++) {
+      if (canPlaceForGameOver(shape, r, c)) return true;
+    }
+  }
+  return false;
+}
+
+
+  function spawnClearParticles(cells, isBomb = false) {
     for (const {r, c} of cells) {
       const cx = layout.gridX + c * CELL_SIZE + CELL_SIZE / 2;
       const cy = layout.gridY + r * CELL_SIZE + CELL_SIZE / 2;
 
-      const n = 10 + Math.floor(Math.random() * 6);
+      const n = isBomb
+      ? 18 + Math.floor(Math.random() * 8)   // 炸彈更多粒子
+      : 10 + Math.floor(Math.random() * 6);
       for (let i = 0; i < n; i++) {
         const ang = Math.random() * Math.PI * 2;
         const spd = 2 + Math.random() * 6;
@@ -1443,7 +1555,8 @@ const deviceUid = getOrCreateDeviceUid();
           vx: Math.cos(ang) * spd,
           vy: Math.sin(ang) * spd - 1.5,
           life: 1,
-          size: 2 + Math.random() * 3
+          size: 2 + Math.random() * 3,
+          bomb: isBomb, // ✅ 把這次是否炸彈記下來
         });
       }
     }
@@ -1550,8 +1663,12 @@ const deviceUid = getOrCreateDeviceUid();
       if (p.life <= 0) { particles.splice(i, 1); continue; }
 
       ctx.save();
-      ctx.globalAlpha = Math.max(0, p.life);
-      ctx.fillStyle = "rgba(255, 215, 0, 1)";
+      ctx.globalAlpha = Math.max(0, p.life) * (p.bomb ? 0.5 : 1);
+
+      ctx.fillStyle = p.bomb
+        ? "rgba(255,160,40,1)"       // 🔥 炸彈紅橙色
+        : "rgba(255,255,255,1)";    // ✨ 一般白色
+
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
       ctx.fill();
@@ -1563,6 +1680,7 @@ const deviceUid = getOrCreateDeviceUid();
       ctx.restore();
     }
   }
+
 
   function spawnLineFlash(rows, cols) {
     for (const r of rows) lineFlashes.push({ type:'row', idx:r, life:1 });
@@ -1669,11 +1787,60 @@ const deviceUid = getOrCreateDeviceUid();
       cc.life -= 0.08;
       if (cc.life <= 0) {
         if (grid[cc.r][cc.c] === 2) grid[cc.r][cc.c] = 0;
+        if (bombGrid) bombGrid[cc.r][cc.c] = false; // ✅ 清掉炸彈
         clearingMap.delete(`${cc.r},${cc.c}`);
         clearingCells.splice(i, 1);
       }
     }
   }
+  function expandBombClears(clearedCells) {
+      let bombTriggered = false;
+      // clearedCells: [{r,c}, ...] 會被擴充
+      const key = (r,c) => `${r},${c}`;
+
+      const clearedSet = new Set(clearedCells.map(p => key(p.r, p.c)));
+      const q = [];
+      const bombSeen = new Set();
+
+      // 初始：被清除集合內的炸彈入隊
+      for (const p of clearedCells) {
+        if (bombGrid?.[p.r]?.[p.c]) {
+          const k = key(p.r,p.c);
+          q.push(p);
+          bombSeen.add(k);
+          bombTriggered = true;
+        }
+      }
+
+      while (q.length) {
+        const cur = q.shift();
+
+        for (let dr = -1; dr <= 1; dr++) {
+          for (let dc = -1; dc <= 1; dc++) {
+            const nr = cur.r + dr;
+            const nc = cur.c + dc;
+            if (nr < 0 || nc < 0 || nr >= GRID_SIZE || nc >= GRID_SIZE) continue;
+
+            // 只炸「非空格」（1 或 2 clearing 都算）
+            if (grid[nr][nc] === 0) continue;
+
+            const kk = key(nr,nc);
+            if (!clearedSet.has(kk)) {
+              clearedSet.add(kk);
+              clearedCells.push({ r: nr, c: nc });
+            }
+
+            // 連鎖：如果炸到另一顆炸彈，且還沒處理過
+            if (bombGrid[nr][nc] && !bombSeen.has(kk)) {
+              bombSeen.add(kk);
+              q.push({ r: nr, c: nc });
+            }
+          }
+        }
+      }
+
+      return { clearedCells, bombTriggered };
+    }
 
   function checkAndClear() {
     const rs = [], cs = [];
@@ -1710,9 +1877,14 @@ const deviceUid = getOrCreateDeviceUid();
 
     if (score > highScore) {
       highScore = score;
-      localStorage.setItem('blockHighScore', String(score));
+      try {
+        localStorage.setItem('blockHighScore', String(score));
+      } catch (e) {
+        // ignore
+      }
       document.getElementById('highScore').innerText = String(score);
     }
+
 
     // ✅ 浮字
     const tier = getComboTier(currentComboCount);
@@ -1727,20 +1899,43 @@ const deviceUid = getOrCreateDeviceUid();
     for (const r of rs) for (let c = 0; c < GRID_SIZE; c++) clearedSet.add(`${r},${c}`);
     for (const c of cs) for (let r = 0; r < GRID_SIZE; r++) clearedSet.add(`${r},${c}`);
 
-    const clearedCells = Array.from(clearedSet).map(s => {
+    let clearedCells = Array.from(clearedSet).map(s => {
       const [r, c] = s.split(',').map(Number);
       return { r, c };
     });
 
-    // ✅ 閃光 + 粒子
+    // ✅ 炸彈：被消除時，3x3 擴散；可連鎖
+    const beforeCount = clearedCells.length;
+
+    const bombResult = expandBombClears(clearedCells);
+    clearedCells = bombResult.clearedCells;
+    const bombTriggered = bombResult.bombTriggered;
+
+    // ✅ 炸彈額外加分：只算「擴散新增的格子」，固定每格 +3，不吃任何加成
+    const extraBombCells = Math.max(0, clearedCells.length - beforeCount);
+    if (bombTriggered && extraBombCells > 0) {
+      const bombBonus = extraBombCells * 3;
+      score += bombBonus;
+      document.getElementById('scoreDisplay').innerText = String(score);
+
+      // 若炸彈加分也可能讓你破個人最高分：同步更新
+      if (score > highScore) {
+        highScore = score;
+        try { localStorage.setItem('blockHighScore', String(score)); } catch (e) {}
+        document.getElementById('highScore').innerText = String(score);
+      }
+    }
+
+
+    // ✅ 閃光 + 粒子（粒子也吃擴散後的）
     spawnLineFlash(rs, cs);
-    spawnClearParticles(clearedCells);
+    spawnClearParticles(clearedCells, bombTriggered);
 
     // ✅ 淡出清除
     startClearingCells(clearedCells);
 
     return true;
-  }
+}
 
   function getCanvasPosFromClient(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
@@ -1859,7 +2054,11 @@ const deviceUid = getOrCreateDeviceUid();
     // ✅ 更新本機「歷史最高 combo」（新增）
     if (maxComboThisRun > bestComboLocal) {
       bestComboLocal = maxComboThisRun;
+      try {
       localStorage.setItem(LS_BEST_COMBO_KEY, String(bestComboLocal));
+    } catch (e) {
+      // ignore
+    }
     }
 
     // UI 先出來（避免 await 卡住）
@@ -1899,9 +2098,8 @@ const deviceUid = getOrCreateDeviceUid();
     })();
   }
 
-  function isOverlayOpen(){
-    // overlay 顯示時 = 正在開啟（display:flex）
-    return overlay && overlay.style.display !== "none";
+  function isOverlayOpen() {
+    return getComputedStyle(overlay).display !== "none";
   }
 
   function handlePointerDown(e) {
@@ -1979,9 +2177,15 @@ const deviceUid = getOrCreateDeviceUid();
 
       if (canPlace(shape, r, c)) {
         for (const coord of shape) {
-          grid[r + coord[0]][c + coord[1]] = 1;
+          const rr = r + coord[0];
+          const cc = c + coord[1];
+          grid[rr][cc] = 1;
+
+          // ✅ 這格是炸彈
+          if (coord[2] === 1) bombGrid[rr][cc] = true;
         }
         hand[draggingIdx] = null;
+
 
         // ✅ 成功放置特效
         const placedCells = shape.map(([dr, dc]) => ({
@@ -1999,24 +2203,17 @@ const deviceUid = getOrCreateDeviceUid();
 
         if (hand.every(h => h === null)) refreshHand();
 
-        let dead = true;
-        for (const s of hand) {
-          if (!s) continue;
-          for (let i = 0; i < GRID_SIZE; i++) {
-            for (let j = 0; j < GRID_SIZE; j++) {
-              if (canPlace(s, i, j)) {
-                dead = false;
-                break;
-              }
-            }
-            if (!dead) break;
-          }
-          if (!dead) break;
-        }
-        if (dead) {
-          gameOver = true;
-          onGameOver();
-        }
+    let dead = true;
+    for (const shape of hand) {
+      if (!shape) continue;
+      if (shapeHasAnyMoveForGameOver(shape)) { dead = false; break; }
+    }
+    if (dead) {
+      gameOver = true;
+      onGameOver();
+    }
+
+
       } else {
         failFeedback();
         startBounceBack(draggingIdx, shape, anchorX, anchorY);
@@ -2070,7 +2267,12 @@ const deviceUid = getOrCreateDeviceUid();
         const x = startX + (coord[1] - bb.minC) * (block + gap);
         const y = startY + (coord[0] - bb.minR) * (block + gap);
         drawBlock(x, y, block, 6, currentTheme, 1);
+
+        if (coord[2] === 1) {
+          drawBombIcon(x + block * 0.72, y + block * 0.28, block);
+        }
       }
+
     }
   }
 
@@ -2137,12 +2339,26 @@ const deviceUid = getOrCreateDeviceUid();
 
           if (cell === 1) {
             drawBlock(x, y, CELL_SIZE - 4, 8, currentTheme, 1);
+            if (bombGrid && bombGrid[r][c]) {
+              drawBombIcon(
+                x + (CELL_SIZE - 4) * 0.72,
+                y + (CELL_SIZE - 4) * 0.30,
+                (CELL_SIZE - 4)
+              );
+            }
           } else {
             const key = `${r},${c}`;
             const cc = clearingMap.get(key);
             const life = cc ? Math.max(0, cc.life) : 0.5;
 
             drawBlock(x, y, CELL_SIZE - 4, 8, currentTheme, 0.25 + 0.75 * life);
+            if (bombGrid && bombGrid[r][c]) {
+              drawBombIcon(
+                x + (CELL_SIZE - 4) * 0.72,
+                y + (CELL_SIZE - 4) * 0.30,
+                (CELL_SIZE - 4)
+              );
+            }            
 
             ctx.save();
             ctx.globalAlpha = 0.35 * life;
@@ -2191,7 +2407,12 @@ const deviceUid = getOrCreateDeviceUid();
           const x = drawX + coord[1] * CELL_SIZE;
           const y = drawY + coord[0] * CELL_SIZE;
           drawBlock(x, y, CELL_SIZE - 4, 8, currentTheme, 1);
+
+          if (coord[2] === 1) {
+            drawBombIcon(x + (CELL_SIZE - 4) * 0.72, y + (CELL_SIZE - 4) * 0.30, (CELL_SIZE - 4));
+          }
         }
+
       }
 
       drawHand();

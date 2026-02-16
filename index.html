@@ -921,6 +921,231 @@ const deviceUid = getOrCreateDeviceUid();
     { shape: [[0,0],[0,1],[0,2],[1,0],[1,1],[1,2],[2,0],[2,1],[2,2]], weight: 3 }
   ];
 
+  // ===== Shape transforms: rotate / mirror =====
+
+  // 將形狀正規化到左上角 (0,0)，並排序，方便比對
+  function normalizeShape(shape) {
+    let minR = Infinity, minC = Infinity;
+    for (const [r, c] of shape) {
+      if (r < minR) minR = r;
+      if (c < minC) minC = c;
+    }
+    const norm = shape.map(([r, c]) => [r - minR, c - minC]);
+    norm.sort((a, b) => (a[0] - b[0]) || (a[1] - b[1]));
+    return norm;
+  }
+
+  // 旋轉 90 度：(r, c) → (c, -r)
+  function rotate90(shape) {
+    const rotated = shape.map(([r, c]) => [c, -r]);
+    return normalizeShape(rotated);
+  }
+
+  // 左右鏡像：(r, c) → (r, -c)
+  function mirrorX(shape) {
+    const mirrored = shape.map(([r, c]) => [r, -c]);
+    return normalizeShape(mirrored);
+  }
+
+  // 用來判斷形狀是否重複的 key
+  function shapeKey(shape) {
+    return normalizeShape(shape)
+      .map(([r, c]) => `${r}:${c}`)
+      .join("|");
+  }
+
+  // 取得某個形狀的「所有旋轉＋鏡像變體」（自動去重）
+  function allVariants(shape) {
+    const map = new Map();
+
+    let cur = normalizeShape(shape);
+    for (let i = 0; i < 4; i++) {
+      const key = shapeKey(cur);
+      if (!map.has(key)) map.set(key, cur);
+      cur = rotate90(cur);
+    }
+
+    cur = mirrorX(shape);
+    for (let i = 0; i < 4; i++) {
+      const key = shapeKey(cur);
+      if (!map.has(key)) map.set(key, cur);
+      cur = rotate90(cur);
+    }
+
+    return Array.from(map.values());
+  }
+
+  // 從所有變體中隨機挑一個
+  function randomVariant(shape) {
+    const vars = allVariants(shape);
+    return vars[Math.floor(Math.random() * vars.length)];
+  }
+
+  // ================================
+  // Hand generation (weight only + anti-dead-hand)
+  // - 不分早期/後期：永遠照權重抽
+  // - 權重平衡：避免單格/長條過多
+  // - 保底：避免一直整手放不下
+  // ================================
+
+  let noMoveHandStreak = 0; // 連續「整手都放不下」的次數（保留給你以後擴充用）
+
+  // 判斷是不是一條線（直線長條）
+  function isLineShape(shape){
+    if (!shape || shape.length <= 1) return false;
+    const allR = shape.every(([r,_]) => r === shape[0][0]);
+    const allC = shape.every(([_,c]) => c === shape[0][1]);
+    return allR || allC;
+  }
+
+  // 動態權重（只做平衡，不做早期/後期）
+  function dynamicWeightFor(shape){
+    const n = shape.length;
+    const line = isLineShape(shape);
+
+    // base weight by size（你可微調）
+    let w =
+      (n === 1) ? 2 :
+      (n === 2) ? 7 :
+      (n === 3) ? 10 :
+      (n === 4) ? 9 :
+      (n === 5) ? 6 :
+      (n === 9) ? 1 : 4;
+
+    // downweight long bars
+    if (line && n >= 4) w *= 0.45;
+
+    // 單格再降一些（但仍保留）
+    if (n === 1) w *= 0.70;
+
+    return Math.max(0.1, w);
+  }
+
+  // 加權抽樣（pool 兼容 def 或純 shape）
+  function pickWeightedFromPool(pool){
+    let total = 0;
+    const weights = pool.map(def => {
+      const baseShape = def.shape ?? def;
+      const w = dynamicWeightFor(baseShape) * (def.weight ?? 10);
+      total += w;
+      return w;
+    });
+
+    let r = Math.random() * total;
+    for (let i = 0; i < pool.length; i++){
+      r -= weights[i];
+      if (r <= 0) return pool[i];
+    }
+    return pool[pool.length - 1];
+  }
+
+  // 檢查：某個 base shape（含所有旋轉/鏡像）是否存在任一可放位置
+  function hasAnyPlacementForBase(baseShape){
+    const vars = allVariants(baseShape);
+    for (const v of vars){
+      for (let r = 0; r < GRID_SIZE; r++){
+        for (let c = 0; c < GRID_SIZE; c++){
+          if (canPlace(v, r, c)) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // 直接挑一個「真的能放」的 variant（用來保底）
+  function pickPlaceableVariant(baseShape){
+    const vars = allVariants(baseShape).slice();
+
+    // 洗牌避免固定方向
+    for (let i = vars.length - 1; i > 0; i--){
+      const j = Math.floor(Math.random() * (i + 1));
+      [vars[i], vars[j]] = [vars[j], vars[i]];
+    }
+
+    for (const v of vars){
+      for (let r = 0; r < GRID_SIZE; r++){
+        for (let c = 0; c < GRID_SIZE; c++){
+          if (canPlace(v, r, c)) return v;
+        }
+      }
+    }
+    return null;
+  }
+
+  // 檢查：hand 是否至少有一塊能放（用所有旋轉/鏡像變體）
+  function handHasAnyMove(handArr){
+    for (const baseOrVariant of handArr){
+      if (!baseOrVariant) continue;
+      const vars = allVariants(baseOrVariant);
+      for (const v of vars){
+        for (let r = 0; r < GRID_SIZE; r++){
+          for (let c = 0; c < GRID_SIZE; c++){
+            if (canPlace(v, r, c)) return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  // 最後保底：強制生成「至少有一塊能放」的手牌
+  function forceSafeHand(pool){
+    const safeHand = [];
+
+    // 先找一個真的能放的 base
+    let guaranteed = null;
+    for (const def of pool){
+      const base = def.shape ?? def;
+      if (hasAnyPlacementForBase(base)){
+        guaranteed = pickPlaceableVariant(base);
+        if (guaranteed) break;
+      }
+    }
+
+    // 如果連保底都找不到（幾乎滿盤），就照權重正常抽
+    if (!guaranteed){
+      for (let i = 0; i < 3; i++){
+        const base = pickWeightedFromPool(pool);
+        safeHand.push(randomVariant(base.shape ?? base));
+      }
+      return safeHand;
+    }
+
+    // 第一塊保證可放，其餘照權重抽
+    safeHand.push(guaranteed);
+    while (safeHand.length < 3){
+      const base = pickWeightedFromPool(pool);
+      safeHand.push(randomVariant(base.shape ?? base));
+    }
+
+    return safeHand;
+  }
+
+  // ✅ 你要的版本：不分早期/後期，永遠照權重抽 + 死牌保底
+  function refreshHand() {
+    const pool = SHAPE_DEFS;
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const candidate = [];
+      for (let i = 0; i < 3; i++) {
+        const base = pickWeightedFromPool(pool);
+        candidate.push(randomVariant(base.shape ?? base));
+      }
+
+      if (handHasAnyMove(candidate)) {
+        hand = candidate;
+        noMoveHandStreak = 0;
+        return;
+      }
+    }
+
+    hand = forceSafeHand(pool);
+    noMoveHandStreak = 0;
+  }
+
+
+
+
   let currentTheme;
   let grid, hand, score, highScore;
 
@@ -1191,20 +1416,6 @@ const deviceUid = getOrCreateDeviceUid();
 
     updateComboUI();
     refreshHand();
-  }
-
-  function refreshHand() {
-    hand = [];
-    for (let i = 0; i < 3; i++) {
-      const totalW = SHAPE_DEFS.reduce((s, x) => s + x.weight, 0);
-      let rand = Math.random() * totalW;
-      let chosen = SHAPE_DEFS[0].shape;
-      for (const def of SHAPE_DEFS) {
-        if (rand < def.weight) { chosen = def.shape; break; }
-        rand -= def.weight;
-      }
-      hand.push(chosen);
-    }
   }
 
   // ✅ clearing(2) 也視為佔用
